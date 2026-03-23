@@ -1,0 +1,153 @@
+.menuContainer {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.menuItem {
+  list-style: none;
+  position: relative;
+  margin-bottom: 0;
+}
+
+.hasGroup {
+  margin-bottom: 0;
+}
+
+.nodeItem {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  border-radius: 6px;
+  margin: 2px 8px;
+}
+
+.nodeItem:hover {
+  background-color: #f0f7ff;
+  color: #1890ff;
+}
+
+.groupItem:hover {
+  background-color: #f0f7ff;
+}
+
+.groupItem {
+  font-weight: 500;
+}
+
+.schemaItem {
+  padding-left: 40px;
+  padding-right: 8px;
+}
+
+.schemaItem.current {
+  background-color: #e6f7ff !important;
+  color: #1890ff;
+  font-weight: 500;
+}
+
+.schemaItem.current:hover {
+  background-color: #bae0ff !important;
+}
+
+.schemaItem:hover {
+  background-color: #f0f7ff;
+}
+
+.dragIcon {
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  cursor: grab;
+  color: #999;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.menuItem:hover .dragIcon {
+  opacity: 1;
+}
+
+.nodeIcon {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  color: #666;
+}
+
+.groupNodeIcon {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  color: #666;
+  transition: transform 0.2s;
+}
+
+.nodeName {
+  flex: 1;
+  font-size: 14px;
+}
+
+.groupName {
+  font-weight: 500;
+}
+
+.childrenNum {
+  color: #999;
+  font-weight: normal;
+}
+
+.settingIcon {
+  width: 18px;
+  height: 18px;
+  color: #999;
+  opacity: 0;
+  transition: opacity 0.2s;
+  cursor: pointer;
+}
+
+.menuItem:hover .settingIcon {
+  opacity: 1;
+}
+
+.titleWrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.titleWrap .top {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.subMenu {
+  list-style: none;
+  padding: 4px 0;
+  margin: 0;
+  background: #fafafa;
+  border-radius: 4px;
+}
+
+.dropZone {
+  border: 1px dashed #d9d9d9;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 12px;
+  text-align: center;
+  color: #999;
+  background: #fafafa;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.dropZone:hover {
+  border-color: #1890ff;
+  background: #f0f7ff;
+  color: #1890ff;
+}
+

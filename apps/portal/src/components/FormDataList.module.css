@@ -1,0 +1,644 @@
+/* 主容器 - 对应 tg-pane-bodyer */
+.tableContainer {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  min-width: 768px; /* 最小宽度，参考源码 */
+  margin-bottom: 0; /* 确保底部有空间 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* 确保表格容器使用 flex 布局 */
+.tableContainer > div {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 表格内容区域 */
+.tableContainer :global(.ant-table-wrapper) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 表格主体区域 - 允许滚动但隐藏水平滚动条 */
+.tableContainer :global(.ant-table-body) {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  /* 隐藏水平滚动条但保留滚动功能 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+/* Chrome/Safari - 隐藏水平滚动条但保留滚动功能 */
+.tableContainer :global(.ant-table-body)::-webkit-scrollbar {
+  width: 12px; /* 垂直滚动条宽度 */
+  height: 0; /* 隐藏水平滚动条 */
+}
+
+.tableContainer :global(.ant-table-body)::-webkit-scrollbar:horizontal {
+  display: none !important;
+  height: 0 !important;
+}
+
+/* 固定滚动条容器 - 显示在表格底部 */
+.fixedScrollbarContainer {
+  position: relative;
+  z-index: 10;
+  height: 6px;
+  width: 100%;
+  background: transparent;
+  border-radius: 999px;
+  margin-top: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* 固定滚动条滑块 - 通过 JavaScript 动态更新位置和宽度 */
+.fixedScrollbarThumb {
+  height: 4px;
+  background: #c6c6c6;
+  border-radius: 999px;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  cursor: pointer;
+  min-width: 20px;
+  transition: background 0.2s, opacity 0.2s;
+  opacity: 0.9;
+}
+
+.fixedScrollbarThumb:hover {
+  background: #9e9e9e;
+  opacity: 1;
+}
+
+/* 表格头部 - 对应 tg-pane-header */
+.tableHeader {
+  width: 100%;
+  /* 单行表头高度38px */
+  position: relative;
+  border-bottom: 1px solid #e8e8e8;
+  z-index: 100; /* 提高z-index，确保表头在最上层，不被其他元素覆盖 */
+  background: #fff; /* 添加背景色，确保表头内容可见 */
+  overflow: visible; /* 确保表头内容不被裁剪 */
+}
+
+.tableHeaderLeft {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* 单行表头高度38px */
+  /* 不在容器层画右边框，避免与单元格边框重复导致错位，由最后一列表头单元格负责画边线 */
+  overflow: visible; /* 改为visible，确保第二行表头可见 */
+  z-index: 101; /* 提高z-index，确保表头左侧在最上层 */
+  /* 为了锁定列和未锁定列视觉一致，使用与右侧相同的背景色，并去掉阴影 */
+  background: #fff;
+  box-shadow: none;
+}
+
+.tableHeaderRight {
+  position: absolute;
+  top: 0;
+  /* 单行表头高度38px */
+  overflow-x: auto; /* 允许横向滚动，但通过CSS隐藏滚动条 */
+  overflow-y: hidden; /* 不需要纵向滚动 */
+  z-index: 100; /* 提高z-index，确保表头右侧在最上层 */
+  background: #fff;
+  /* 确保不会延伸到固定列 */
+  scrollbar-width: none; /* Firefox - 隐藏滚动条 */
+  -ms-overflow-style: none; /* IE and Edge - 隐藏滚动条 */
+}
+
+/* 隐藏表头的横向滚动条 - Chrome/Safari */
+.tableHeaderRight::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+.tableHeaderRightFixed {
+  position: absolute;
+  top: 0;
+  height: 38px; /* 单行表头：38px，参考实现；有子表时为76px（通过JS动态设置） */
+  border-left: 1px solid #e8e8e8;
+  overflow: visible; /* 改为visible，确保第二行表头可见 */
+  z-index: 102; /* 提高z-index，确保表头右侧固定列在最上层 */
+  background: #fff;
+  box-shadow: none;
+}
+
+
+.tableHeaderTable {
+  display: table;
+  width: 100%;
+  min-width: 100%; /* 确保最小宽度为100%，允许超出 */
+  height: 38px; /* 单行表头 */
+  table-layout: fixed; /* 改为fixed，确保列宽固定，参考实现 */
+  overflow: visible; /* 确保表头内容不被裁剪 */
+  will-change: transform; /* 优化transform性能 */
+}
+
+.tableHeaderRow {
+  display: table-row;
+  height: 38px; /* 每行高度38px */
+}
+
+.tableHeaderCell {
+  display: table-cell;
+  padding: 0 12px; /* 参考实现：padding为0，内容通过内部元素控制 */
+  font-size: 14px;
+  font-weight: 500;
+  vertical-align: middle;
+  white-space: nowrap;
+  border-right: 1px solid #e8e8e8;
+  height: 38px;
+  line-height: 28px; /* 参考实现：line-height: 28px */
+  box-sizing: border-box;
+  background: #fafafa;
+  color: #333;
+  position: relative;
+  overflow: visible; /* 确保表头单元格内容不被裁剪 */
+}
+
+/* 子表标题列 - 跨两行显示 */
+.tableHeaderCellSubtableTitle {
+  vertical-align: top;
+  height: 76px !important; /* 跨两行，高度76px */
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.tableHeaderCell:last-child {
+  border-right: none;
+}
+
+/* 空白列样式 */
+.tableHeaderCellBlank {
+  width: auto !important;
+  min-width: 0;
+  flex: 1;
+}
+
+.tableBodyCellBlank {
+  width: auto !important;
+  min-width: 0;
+  flex: 1;
+}
+
+.headerCellContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px; /* 参考实现：高度38px */
+  line-height: 28px; /* 参考实现：line-height: 28px */
+  white-space: nowrap; /* 防止文字换行 */
+  gap: 8px;
+}
+
+.lockIcon {
+  cursor: pointer;
+  color: #666;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s;
+}
+
+.lockIcon:hover {
+  color: #1890ff;
+}
+
+/* 列宽调整手柄 */
+.resizeHandle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  background: transparent;
+  transition: background 0.2s;
+  user-select: none;
+}
+
+.resizeHandle:hover {
+  background: rgba(24, 144, 255, 0.1);
+}
+
+.resizeHandle::after {
+  content: '';
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 20px;
+  background: #d9d9d9;
+}
+
+/* 表格主体 - 对应 tg-pane-bodyer */
+.tableBodyer {
+  width: 100%;
+  /* 参考 H3：tg-pane-bodyer 高度 433px（内容区 393px + 底部统计 40px） */
+  height: 433px !important;
+  max-height: 433px !important;
+  min-height: 433px !important;
+  position: relative;
+  overflow: hidden !important; /* 改为hidden，防止内容溢出导致高度变化 */
+  top: 0; /* 确保从表头下方开始，不被表头覆盖 */
+  margin-top: 0; /* 确保没有额外的上边距 */
+}
+
+/* 顶部内容区域 - 对应 tg-pane-top */
+.tablePaneTop {
+  width: 100%;
+  /* 参考 H3：内容区高度 393px（433 - 40） */
+  height: 393px !important;
+  max-height: 393px !important;
+  position: relative;
+  overflow: hidden; /* 隐藏溢出内容 */
+}
+
+.tablePaneTopLeft {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 393px !important;
+  max-height: 393px !important;
+  /* 不在容器层画右边框，避免与单元格边框重复导致错位，由最后一列数据单元格负责画边线 */
+  /* 不让左侧产生独立滚动条，统一由右侧容器控制纵向滚动 */
+  overflow-y: hidden;
+  overflow-x: hidden;
+  z-index: 10;
+  /* 锁定区与右侧保持一致的背景与无阴影，避免锁定/未锁定风格不一致 */
+  background: #fff;
+  box-shadow: none;
+}
+
+.tablePaneTopLeft::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+
+.tablePaneTopRight {
+  position: absolute;
+  top: 0;
+  height: 393px !important;
+  max-height: 393px !important;
+  min-height: 393px !important;
+  overflow-x: hidden !important; /* 完全隐藏横向滚动条，由统计行下方的滚动条控制 */
+  overflow-y: auto !important; /* 恢复纵向滚动条 */
+  z-index: 8; /* 表体z-index高于表头，确保表体内容可见 */
+  background: #fff;
+  /* 确保不会延伸到固定列 */
+  /* Firefox - 只显示纵向滚动条 */
+  scrollbar-width: thin;
+  scrollbar-color: #888 #f1f1f1;
+}
+
+/* Chrome/Safari - 隐藏横向滚动条，只显示纵向滚动条 */
+.tablePaneTopRight::-webkit-scrollbar {
+  width: 12px; /* 纵向滚动条宽度 */
+  height: 0 !important; /* 横向滚动条高度为0，完全隐藏 */
+}
+
+/* 更强制地隐藏横向滚动条 */
+.tablePaneTopRight::-webkit-scrollbar:horizontal {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+}
+
+/* 确保横向滚动条轨道和滑块都隐藏 */
+.tablePaneTopRight::-webkit-scrollbar-track:horizontal {
+  display: none !important;
+}
+
+.tablePaneTopRight::-webkit-scrollbar-thumb:horizontal {
+  display: none !important;
+}
+
+.tablePaneTopRight::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.tablePaneTopRight::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 6px;
+}
+
+.tablePaneTopRight::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.tablePaneTopRightFixed {
+  position: absolute;
+  top: 0;
+  height: 393px !important;
+  max-height: 393px !important;
+  border-left: 1px solid #e8e8e8;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 12; /* 固定列z-index最高，确保在表头之上 */
+  background: #fff;
+  box-shadow: none;
+}
+
+.tablePaneTopRightFixed::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+
+.tableBodyTable {
+  position: relative;
+  width: 100%;
+  min-width: 100%;
+}
+
+.tableBodyRow {
+  position: absolute;
+  border-bottom: 1px solid #f0f0f0;
+  height: 32px; /* 默认行高32px，有子表数据时会动态计算 */
+  line-height: 32px;
+  display: flex;
+  left: 0;
+  width: 100%;
+  transition: background-color 0.2s;
+}
+
+.tableBodyRow:hover .tableBodyCell {
+  background-color: inherit;
+}
+
+.tableBodyCell {
+  display: table-cell;
+  padding: 8px 12px;
+  font-size: 14px;
+  vertical-align: middle;
+  border-right: 1px solid #f0f0f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.5;
+  color: #333;
+  background: transparent; /* 改为transparent，由父行控制背景色 */
+  height: 32px; /* 默认高度32px，有子表数据时会动态计算 */
+  box-sizing: border-box;
+  transition: background-color 0.2s;
+}
+
+/* 子表单元格 - 支持多行显示，参考 tg-lazy-fix 和 tg-lazy-item */
+.subtableCell {
+  display: block; /* 参考 tg-lazy-fix：block布局 */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  height: 100%;
+  width: 100%;
+  padding: 0;
+}
+
+.subtableRow {
+  display: block; /* 参考 tg-lazy-item：block布局 */
+  height: 32px; /* 每行子表数据固定高度32px */
+  line-height: 32px;
+  padding: 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 14px; /* 参考实现：14px */
+  color: #333; /* 参考实现：#333 */
+  min-height: 32px;
+  box-sizing: border-box;
+}
+
+.subtableRow:last-child {
+  border-bottom: none;
+}
+
+/* 子表单元格内的内容容器，参考 h3-tg-cell runtime */
+.subtableRowContent {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 12px; /* 参考实现：padding 0 12px */
+  box-sizing: border-box;
+}
+
+/* h3-tg-cell runtime 样式 */
+.h3TgCell {
+  width: 100%;
+  height: 100%;
+}
+
+.h3TgCell.runtime {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+/* 占位的 AG Grid 外层包装，当前未使用，仅用于兼容旧结构 */
+.agGridWrapper {
+  width: 100%;
+}
+
+/* 移除最后一个单元格的右边框，由内联样式控制 */
+
+/* 底部统计行和滚动条区域 - 对应 tg-pane-bottom */
+.tablePaneBottom {
+  width: 100%;
+  height: 8px; /* 只保留滚动条高度 */
+  margin-top: 4px;
+  position: relative; /* 跟随布局，不再绝对覆盖表格 */
+  background: transparent; /* 透明背景，不遮挡内容 */
+  display: block !important;
+  visibility: visible !important;
+}
+
+.tablePaneBottomLeft {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 32px;
+  border-right: 1px solid #e8e8e8;
+  z-index: 101 !important; /* 提高z-index */
+  background: #fff; /* 背景色，确保统计行可见 */
+  display: block !important; /* 强制显示 */
+  visibility: visible !important; /* 强制可见 */
+}
+
+.tablePaneBottomRight {
+  position: relative;
+  top: 0;
+  height: 8px; /* 只保留滚动条高度 */
+  z-index: 1;
+  background: transparent; /* 透明背景 */
+  overflow: visible !important;
+  display: block !important;
+  visibility: visible !important;
+}
+
+/* 横向滚动条 - 对应 tg-scrollbar-h */
+.tableScrollbarH {
+  width: 100%;
+  height: 0;
+}
+
+.tableScrollbarTrack {
+  display: none;
+}
+
+.tableScrollbarThumb {
+  display: none;
+}
+
+/* 统计操作按钮样式 */
+.customCountingOperator {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filterScopeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  gap: 4px;
+}
+
+.filterScopeBtn:hover {
+  background-color: #f5f5f5;
+}
+
+.filterScopeBtn span {
+  display: inline-block;
+  width: 0;
+  height: 0;
+}
+
+/* 滚动条 - 对应 tg-scrollbar-h */
+.scrollbar {
+  width: 100%;
+  height: 8px;
+  position: relative;
+  z-index: 102 !important; /* 提高z-index */
+  display: block !important; /* 强制显示 */
+  flex-shrink: 0;
+  margin-top: 0;
+  visibility: visible !important; /* 强制可见 */
+}
+
+.scrollbarTrack {
+  width: 100%;
+  height: 8px;
+  background: #f1f1f1 !important; /* 强制背景色 */
+  position: relative;
+  border-radius: 4px;
+  display: block !important; /* 强制显示 */
+  visibility: visible !important; /* 强制可见 */
+}
+
+.scrollbarThumb {
+  height: 8px;
+  background: #bfbfbf;
+  border-radius: 4px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  min-width: 20px;
+  opacity: 1;
+}
+
+.scrollbarThumb:hover {
+  background: #8c8c8c;
+}
+
+/* 空数据提示 - 对应 tg-pane-message */
+.emptyMessage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 100;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.emptyMessage img {
+  width: 104px;
+  height: 104px;
+  display: block;
+  margin: 0 auto;
+}
+
+.emptyMessageText {
+  color: #8893a7;
+  font-size: 14px;
+  text-align: center;
+  margin-top: 12px;
+  display: block;
+  width: auto;
+}
+
+/* 分隔线 */
+.divider {
+  margin: 0;
+  border-color: #e8e8e8;
+}
+
+/* 底部状态栏 - 对应 grid-footer */
+.footerBar {
+  padding: 12px 0;
+  display: flex !important; /* 强制显示 */
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  background: #fff;
+  margin-top: 0;
+  margin-bottom: 0;
+  visibility: visible !important; /* 强制可见 */
+  position: relative;
+  z-index: 1;
+}
+
+.statusInfo {
+  display: flex;
+  gap: 16px;
+}
+
+.statusItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusItem .icon {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.statusItem .text {
+  font-size: 14px;
+  color: #666;
+}

@@ -1,0 +1,443 @@
+.landing-page {
+  min-height: 100vh;
+  background: #fff;
+}
+
+/* 导航栏 */
+.landing-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  padding: 0;
+  height: 72px;
+  line-height: 72px;
+}
+
+.landing-header.scrolled {
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.header-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.nav-menu {
+  display: flex;
+  gap: 32px;
+  align-items: center;
+}
+
+.nav-menu a {
+  color: #333;
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  transition: color 0.3s ease;
+  position: relative;
+}
+
+.nav-menu a:hover {
+  color: #1890ff;
+}
+
+.nav-menu a::after {
+  content: "";
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: #1890ff;
+  transition: width 0.3s ease;
+}
+
+.nav-menu a:hover::after {
+  width: 100%;
+}
+
+.header-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.mobile-menu-btn {
+  display: none;
+}
+
+/* Hero 区域 */
+.hero-section {
+  padding: 120px 24px 80px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  margin-top: 72px;
+}
+
+.hero-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 48px;
+}
+
+.hero-content {
+  flex: 1;
+}
+
+.hero-title {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 24px;
+  color: #fff;
+}
+
+.hero-description {
+  font-size: 20px;
+  line-height: 1.8;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 0;
+}
+
+.hero-stats {
+  padding-top: 32px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.hero-stats .ant-statistic-title {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+}
+
+.hero-stats .ant-statistic-content {
+  color: #fff;
+  font-size: 32px;
+}
+
+.hero-image {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.hero-placeholder {
+  width: 100%;
+  height: 400px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+}
+
+/* 通用区域样式 */
+.section-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 80px 24px;
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.section-header h2 {
+  font-size: 40px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+/* 功能特性 */
+.features-section {
+  background: #fafafa;
+}
+
+.feature-card {
+  height: 100%;
+  text-align: center;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.feature-icon {
+  margin-bottom: 16px;
+}
+
+/* 产品优势 */
+.advantages-section {
+  background: #fff;
+}
+
+.advantages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.advantage-item {
+  display: flex;
+  align-items: center;
+}
+
+.advantages-image {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.advantages-placeholder {
+  width: 100%;
+  height: 400px;
+  background: #f5f5f5;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 应用场景 */
+.cases-section {
+  background: #fafafa;
+}
+
+.case-card {
+  height: 100%;
+  text-align: center;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.case-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.case-icon {
+  margin-bottom: 16px;
+  color: #1890ff;
+}
+
+/* 客户评价 */
+.testimonials-section {
+  background: #fff;
+}
+
+.testimonial-card {
+  height: 100%;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.testimonial-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* 价格方案 */
+.pricing-section {
+  background: #fafafa;
+}
+
+.pricing-card {
+  height: 100%;
+  border-radius: 12px;
+  position: relative;
+  transition: all 0.3s ease;
+  text-align: center;
+}
+
+.pricing-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.pricing-card.featured {
+  border: 2px solid #1890ff;
+  transform: scale(1.05);
+}
+
+.pricing-price {
+  margin: 24px 0;
+}
+
+.pricing-features {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pricing-feature {
+  display: flex;
+  align-items: center;
+}
+
+/* CTA 区域 */
+.cta-section {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 80px 24px;
+}
+
+.cta-card {
+  max-width: 800px;
+  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: none;
+  border-radius: 16px;
+  padding: 48px;
+}
+
+/* 页脚 */
+.landing-footer {
+  background: #001529;
+  color: #fff;
+  padding: 64px 24px 32px;
+}
+
+.footer-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.footer-section {
+  margin-bottom: 32px;
+}
+
+.footer-links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.footer-links li {
+  margin-bottom: 12px;
+}
+
+.footer-links a {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+.footer-links a:hover {
+  color: #1890ff;
+}
+
+.social-link {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 20px;
+  transition: color 0.3s ease;
+}
+
+.social-link:hover {
+  color: #1890ff;
+}
+
+.footer-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .nav-menu {
+    position: fixed;
+    top: 72px;
+    left: 0;
+    right: 0;
+    background: #fff;
+    flex-direction: column;
+    padding: 24px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+
+  .nav-menu.open {
+    transform: translateX(0);
+  }
+
+  .mobile-menu-btn {
+    display: block;
+  }
+
+  .hero-container {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .hero-title {
+    font-size: 36px;
+  }
+
+  .hero-description {
+    font-size: 16px;
+  }
+
+  .hero-stats .ant-col {
+    margin-bottom: 24px;
+  }
+
+  .section-container {
+    padding: 48px 16px;
+  }
+
+  .section-header h2 {
+    font-size: 28px;
+  }
+
+  .pricing-card.featured {
+    transform: scale(1);
+  }
+
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+@media (max-width: 576px) {
+  .hero-title {
+    font-size: 28px;
+  }
+
+  .hero-description {
+    font-size: 14px;
+  }
+
+  .section-header h2 {
+    font-size: 24px;
+  }
+}
+

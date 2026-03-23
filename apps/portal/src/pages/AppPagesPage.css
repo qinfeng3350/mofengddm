@@ -1,0 +1,95 @@
+.app-pages-header {
+  background: #fff;
+  padding: 0 24px;
+  border-bottom: 1px solid #f0f0f0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.app-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.app-tabs .active-tab {
+  color: #1890ff;
+  border-bottom: 2px solid #1890ff;
+}
+
+.app-pages-sider {
+  background: #fff;
+  border-right: 1px solid #f0f0f0;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.sider-search {
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.sider-search .ant-input {
+  border-radius: 4px;
+}
+
+.sider-nav {
+  padding: 8px 0;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.nav-item:hover {
+  background: #f5f5f5;
+}
+
+.sider-pages {
+  padding: 8px 0;
+}
+
+.page-placeholders {
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.page-placeholder {
+  height: 40px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  border: 1px dashed #d9d9d9;
+}
+
+.sider-controls {
+  padding: 8px 0;
+}
+
+.control-menu {
+  border: none;
+  background: transparent;
+}
+
+.control-menu .ant-menu-item {
+  margin: 0;
+  padding-left: 16px !important;
+}
+
+.sider-footer {
+  padding: 16px;
+  border-top: 1px solid #f0f0f0;
+  margin-top: auto;
+}
+
+.app-pages-content {
+  background: #f5f5f5;
+  min-height: calc(100vh - 64px);
+  overflow-y: auto;
+}

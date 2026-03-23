@@ -1,0 +1,36 @@
+{
+  "name": "@mofeng/shared-schema",
+  "version": "0.1.0",
+  "description": "墨枫低代码平台通用 Schema 定义",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --splitting",
+    "lint": "eslint \"src/**/*.ts\""
+  },
+  "keywords": [
+    "lowcode",
+    "schema",
+    "mofeng"
+  ],
+  "author": "",
+  "license": "MIT",
+  "packageManager": "pnpm@10.23.0",
+  "devDependencies": {
+    "@types/node": "^22.8.7",
+    "eslint": "^9.11.1",
+    "typescript": "^5.5.4",
+    "tsup": "^8.3.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  }
+}

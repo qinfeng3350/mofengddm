@@ -1,0 +1,70 @@
+.fieldLibraryPanel {
+  height: 100%;
+  overflow: auto;
+  background: #fafafa;
+  padding: 12px;
+  /* 自定义滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: #d9d9d9 #fafafa;
+}
+
+/* Webkit浏览器滚动条样式 */
+.fieldLibraryPanel::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.fieldLibraryPanel::-webkit-scrollbar-track {
+  background: #fafafa;
+  border-radius: 4px;
+}
+
+.fieldLibraryPanel::-webkit-scrollbar-thumb {
+  background: #d9d9d9;
+  border-radius: 4px;
+  border: 1px solid #fafafa;
+}
+
+.fieldLibraryPanel::-webkit-scrollbar-thumb:hover {
+  background: #bfbfbf;
+}
+
+.collapseWrapper {
+  background: transparent;
+}
+
+.collapseWrapper :global(.ant-collapse-item) {
+  background: transparent;
+  border: none;
+  margin-bottom: 16px;
+}
+
+.collapseWrapper :global(.ant-collapse-header) {
+  padding: 8px 0 !important;
+  background: transparent !important;
+  border: none !important;
+  font-weight: 600;
+  font-size: 14px;
+  color: #262626;
+}
+
+.collapseWrapper :global(.ant-collapse-content-box) {
+  padding: 8px 0 !important;
+  background: transparent;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0;
+}
+
+.sectionLabel {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-bottom: 8px;
+  display: block;
+  font-weight: 400;
+}
+

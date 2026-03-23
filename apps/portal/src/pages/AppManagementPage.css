@@ -1,0 +1,19 @@
+.app-management-header {
+  background: #fff;
+  padding: 0 24px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  height: 64px;
+  line-height: 64px;
+}
+
+.app-management-header .ant-space {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.app-management-header .ant-typography-title {
+  margin: 0;
+}
+

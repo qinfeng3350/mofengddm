@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="rocketGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1890ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#096dd9;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- 背景圆形 -->
+  <circle cx="32" cy="32" r="30" fill="url(#rocketGradient)"/>
+  
+  <!-- 火箭头部 -->
+  <path d="M 32 14 L 37 26 L 32 30 L 27 26 Z" fill="#ffffff"/>
+  
+  <!-- 火箭身体 -->
+  <rect x="29" y="26" width="6" height="18" fill="#ffffff" rx="1"/>
+  
+  <!-- 火箭窗口 -->
+  <circle cx="32" cy="32" r="4" fill="#1890ff"/>
+  
+  <!-- 左侧翼 -->
+  <path d="M 27 26 L 20 30 L 23 34 L 27 30 Z" fill="#ffffff" opacity="0.9"/>
+  
+  <!-- 右侧翼 -->
+  <path d="M 37 26 L 44 30 L 41 34 L 37 30 Z" fill="#ffffff" opacity="0.9"/>
+  
+  <!-- 火焰外层 -->
+  <path d="M 29 44 L 26 52 L 32 50 L 38 52 L 35 44 Z" fill="#ffd700"/>
+  
+  <!-- 火焰内层 -->
+  <path d="M 30 46 L 28 54 L 32 52 L 36 54 L 34 46 Z" fill="#ffed4e"/>
+</svg>

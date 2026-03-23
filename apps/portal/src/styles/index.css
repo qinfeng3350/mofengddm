@@ -1,0 +1,23 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f5f5f5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* 修复 RuntimeListPage 中 Content 的 overflow 问题 - 隐藏侧边滚动条 */
+.runtime-list-content.ant-layout-content {
+  overflow: hidden !important; /* 隐藏滚动条，参考实现 */
+  max-height: calc(100vh - 64px) !important;
+}
+
