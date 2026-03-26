@@ -2,8 +2,6 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
-// dingtalk-stream 使用 ESM/CJS 双产物；Nest(编译为 CJS) 下可直接 import
-import { DWClient, EventAck, type DWClientDownStream } from 'dingtalk-stream';
 import { TenantEntity } from '../../database/entities';
 
 /**
@@ -16,7 +14,8 @@ import { TenantEntity } from '../../database/entities';
 @Injectable()
 export class DingtalkStreamService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DingtalkStreamService.name);
-  private client: DWClient | null = null;
+  // 注意：这里不能使用 dingtalk-stream 的静态类型导入，否则在依赖未安装时会导致 TS2307 编译失败
+  private client: any | null = null;
   private lastError: string | null = null;
   private hasCredentials = false;
   private enabled = false;
@@ -83,13 +82,34 @@ export class DingtalkStreamService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log('正在启动钉钉 Stream 连接...');
 
-      const client = new DWClient({
-        clientId,
-        clientSecret,
-      });
+      let streamPkg: any;
+      try {
+        // 延迟加载：避免依赖未安装时在“编译期”直接报 TS2307
+        streamPkg = require('dingtalk-stream');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.enabled = false;
+        this.hasCredentials = false;
+        this.lastError = msg;
+        this.logger.error('Stream 依赖 dingtalk-stream 未安装或加载失败', msg);
+        return;
+      }
+
+      const DWClient = streamPkg?.DWClient;
+      const EventAck = streamPkg?.EventAck;
+
+      if (!DWClient || !EventAck) {
+        this.enabled = false;
+        this.hasCredentials = false;
+        this.lastError = 'dingtalk-stream 包结构异常：缺少 DWClient/EventAck';
+        this.logger.error(this.lastError);
+        return;
+      }
+
+      const client = new DWClient({ clientId, clientSecret });
 
       // 注册一个通用 listener，保证通道可验证；事件类型由钉钉后台勾选决定
-      client.registerAllEventListener((event: DWClientDownStream) => {
+      client.registerAllEventListener((event: any) => {
         try {
           this.logger.debug(
             `收到 Stream 事件: eventType=${event.headers?.eventType} eventId=${event.headers?.eventId}`,
@@ -97,7 +117,8 @@ export class DingtalkStreamService implements OnModuleInit, OnModuleDestroy {
         } catch {
           // ignore
         }
-        return { status: EventAck.SUCCESS, message: 'OK' };
+        const successStatus = EventAck.SUCCESS ?? 'SUCCESS';
+        return { status: successStatus, message: 'OK' };
       });
 
       // 连接（SDK 内部会建立 websocket；connect() resolve 通常意味着 socket open）
