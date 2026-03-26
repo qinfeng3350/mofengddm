@@ -21,6 +21,7 @@ export default defineConfig({
       "70a2818b.r16.cpolar.top",
       "936a8de.r16.cpolar.top",
       "56760425.r16.cpolar.top",
+      "ddm.mofeng33506.xyz",
     ],
     proxy: {
       '/api': {
