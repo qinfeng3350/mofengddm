@@ -115,5 +115,32 @@ export class AuthController {
 
     return { success: true };
   }
+
+  /**
+   * 获取当前账号可切换的租户列表
+   */
+  @Get('tenants')
+  async getTenants(@Request() req: any) {
+    const account = req.user?.account;
+    if (!account) {
+      throw new Error('无法确定当前账号');
+    }
+    return this.authService.getTenantsByAccount(account);
+  }
+
+  /**
+   * 切换租户：生成新的 JWT（sub=userId，tenantId=user.tenantId）
+   */
+  @Post('switch-tenant')
+  async switchTenant(
+    @Request() req: any,
+    @Body() body: { tenantId: string },
+  ) {
+    const account = req.user?.account;
+    if (!account) {
+      throw new Error('无法确定当前账号');
+    }
+    return this.authService.switchTenant(account, body.tenantId);
+  }
 }
 

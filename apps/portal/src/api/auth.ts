@@ -37,6 +37,14 @@ export const authApi = {
     return apiClient.get("/auth/profile");
   },
 
+  getTenants: (): Promise<Array<{ id: string; code: string; name: string }>> => {
+    return apiClient.get("/auth/tenants");
+  },
+
+  switchTenant: (payload: { tenantId: string }): Promise<any> => {
+    return apiClient.post("/auth/switch-tenant", payload);
+  },
+
   changePassword: (payload: {
     oldPassword?: string;
     newPassword: string;

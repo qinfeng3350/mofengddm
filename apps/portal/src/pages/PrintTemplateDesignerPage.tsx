@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { Layout, Button, Space, Input, Typography, Card, Radio, Select, InputNumber, Collapse, Avatar, Modal, Dropdown, Tag } from "antd";
 import { useAuthStore } from "@/store/useAuthStore";
 import { printTemplateApi } from "@/api/printTemplate";
+import { authApi } from "@/api/auth";
 import {
   ArrowLeftOutlined,
   SaveOutlined,
@@ -167,7 +168,7 @@ const PreviewTable: React.FC<{ previewData: any }> = ({ previewData }) => {
 export const PrintTemplateDesignerPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user, clearAuth } = useAuthStore();
+  const { user, clearAuth, setAuth } = useAuthStore();
   const formId = searchParams.get("formId");
   const initialTemplateId = searchParams.get("templateId"); // 编辑模式下的模板ID
   const templateName = searchParams.get("name") || "未命名模板";
@@ -203,6 +204,56 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewData, setPreviewData] = useState<any>(null);
   const spreadsheetRef = useRef<SpreadsheetEditorRef>(null);
+
+  const [tenantSwitchOpen, setTenantSwitchOpen] = useState(false);
+  const [tenantSwitchLoading, setTenantSwitchLoading] = useState(false);
+  const [tenantOptions, setTenantOptions] = useState<
+    Array<{ id: string; code?: string; name?: string }>
+  >([]);
+  const [targetTenantId, setTargetTenantId] = useState<string | null>(null);
+
+  const handleTenantSwitchOpen = async () => {
+    setTenantSwitchOpen(true);
+    setTenantSwitchLoading(true);
+    try {
+      const res = await authApi.getTenants();
+      // 兼容后端可能返回的结构：数组或 {tenants:[]}
+      const list = Array.isArray(res) ? res : (res as any)?.tenants ?? [];
+      setTenantOptions(list);
+      setTargetTenantId(list?.[0]?.id ?? null);
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || "获取租户列表失败";
+      message.error(msg);
+      console.error("获取租户列表失败:", e);
+    } finally {
+      setTenantSwitchLoading(false);
+    }
+  };
+
+  const handleTenantSwitchConfirm = async () => {
+    if (!targetTenantId) {
+      message.warning("请选择要切换的租户");
+      return;
+    }
+    setTenantSwitchLoading(true);
+    try {
+      const res = await authApi.switchTenant({ tenantId: targetTenantId });
+      if (res?.access_token && res?.user) {
+        setAuth(res.access_token, res.user);
+        message.success("租户切换成功");
+        setTenantSwitchOpen(false);
+        window.location.reload();
+        return;
+      }
+      message.error("租户切换失败：响应格式错误");
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || "租户切换失败";
+      message.error(msg);
+      console.error("租户切换失败:", e);
+    } finally {
+      setTenantSwitchLoading(false);
+    }
+  };
 
   // 处理用户菜单点击
   const handleUserMenuClick = ({ key }: { key: string }) => {
@@ -557,6 +608,9 @@ export const PrintTemplateDesignerPage: React.FC = () => {
                   key: "tenant-switch",
                   icon: <SwapOutlined />,
                   label: "切换",
+                  onClick: () => {
+                    void handleTenantSwitchOpen();
+                  },
                 },
                 { type: "divider" },
                 { key: "profile", icon: <SolutionOutlined />, label: "个人信息" },
@@ -961,6 +1015,29 @@ export const PrintTemplateDesignerPage: React.FC = () => {
             <PreviewTable previewData={previewData} />
           </div>
         )}
+      </Modal>
+
+      {/* 租户切换模态框 */}
+      <Modal
+        title="切换租户"
+        open={tenantSwitchOpen}
+        onCancel={() => setTenantSwitchOpen(false)}
+        confirmLoading={tenantSwitchLoading}
+        onOk={() => void handleTenantSwitchConfirm()}
+        okText="切换"
+      >
+        <Select
+          value={targetTenantId ?? undefined}
+          onChange={(v) => setTargetTenantId(String(v))}
+          style={{ width: "100%" }}
+          placeholder="请选择要切换的租户"
+        >
+          {tenantOptions.map((t) => (
+            <Select.Option key={t.id} value={t.id}>
+              {t.name || t.code || t.id}
+            </Select.Option>
+          ))}
+        </Select>
       </Modal>
     </Layout>
   );

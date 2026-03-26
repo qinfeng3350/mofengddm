@@ -2,9 +2,10 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserEntity, TenantEntity } from '../../database/entities';
@@ -20,6 +21,30 @@ export class AuthService {
     private tenantRepository: Repository<TenantEntity>,
     private jwtService: JwtService,
   ) {}
+
+  private buildUserDto(user: UserEntity, tenant: TenantEntity) {
+    return {
+      id: user.id,
+      account: user.account,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      tenantId: user.tenantId,
+      tenant: {
+        id: tenant.id,
+        code: tenant.code,
+        name: tenant.name,
+      },
+    };
+  }
+
+  private buildTokenPayload(user: UserEntity) {
+    return {
+      sub: user.id,
+      account: user.account,
+      tenantId: user.tenantId,
+    };
+  }
 
   async register(registerDto: RegisterDto) {
     // 检查账号是否已存在
@@ -160,6 +185,58 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  async getTenantsByAccount(account: string): Promise<Array<{ id: string; code: string; name: string }>> {
+    const users = await this.userRepository.find({
+      where: { account },
+      select: ['tenantId'],
+    });
+
+    const tenantIds = Array.from(
+      new Set(
+        users
+          .map((u) => u.tenantId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+
+    if (tenantIds.length === 0) {
+      throw new BadRequestException('当前账号没有可切换的租户');
+    }
+
+    const tenants = await this.tenantRepository.find({
+      where: { id: In(tenantIds) as any },
+      select: ['id', 'code', 'name'],
+    });
+
+    return tenants.map((t) => ({ id: t.id, code: t.code, name: t.name }));
+  }
+
+  async switchTenant(account: string, tenantId: string): Promise<{ access_token: string; user: any }> {
+    const targetUser = await this.userRepository.findOne({
+      where: { account, tenantId },
+    });
+
+    if (!targetUser) {
+      throw new BadRequestException('未找到该账号对应的目标租户用户');
+    }
+
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: targetUser.tenantId },
+      select: ['id', 'code', 'name'],
+    });
+
+    if (!tenant) {
+      throw new BadRequestException('目标租户不存在');
+    }
+
+    const payload = this.buildTokenPayload(targetUser);
+    const token = this.jwtService.sign(payload);
+    return {
+      access_token: token,
+      user: this.buildUserDto(targetUser, tenant),
+    };
   }
 
   /**
