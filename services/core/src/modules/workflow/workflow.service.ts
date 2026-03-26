@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { WorkflowInstanceEntity, FormDefinitionEntity } from '../../database/entities';
+import { WorkflowInstanceEntity, FormDefinitionEntity, TenantEntity, UserEntity } from '../../database/entities';
 import { BusinessRuleExecutorService } from '../business-rule/business-rule.executor';
+import { DingtalkService } from '../dingtalk/dingtalk.service';
 
 type WorkflowNode = {
   nodeId: string;
@@ -26,9 +27,180 @@ export class WorkflowService {
     private readonly instanceRepo: Repository<WorkflowInstanceEntity>,
     @InjectRepository(FormDefinitionEntity)
     private readonly formRepo: Repository<FormDefinitionEntity>,
+    @InjectRepository(TenantEntity)
+    private readonly tenantRepository: Repository<TenantEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
     @Inject(forwardRef(() => BusinessRuleExecutorService))
     private readonly ruleExecutor: BusinessRuleExecutorService,
+    private readonly dingtalkService: DingtalkService,
   ) {}
+
+  private async pushDingtalkTodoIfNeeded(params: {
+    tenantId: string;
+    taskId: string;
+    nodeLabel: string;
+    recordId: string;
+    assigneeUserIds: string[];
+    creatorUserId?: string; // 流程发起/操作用户（系统用户id）
+  }) {
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: params.tenantId },
+    });
+
+    if (!tenant) return;
+
+    const rawMeta = tenant.metadata as any;
+    // tenants.metadata 在 DB 层是 TEXT，TypeORM 有时会返回字符串，需要兜底 parse
+    const meta: any =
+      typeof rawMeta === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(rawMeta);
+            } catch {
+              return {};
+            }
+          })()
+        : rawMeta || {};
+
+    const ding = meta?.dingtalk;
+
+    if (!ding?.appKey || !ding?.appSecret || !ding?.agentId) {
+      // 未配置钉钉待办推送
+      console.warn('[WorkflowService] 跳过钉钉待办推送：tenant 未配置 dingtalk 信息', {
+        tenantId: params.tenantId,
+        tenantCode: (tenant as any).code,
+        tenantName: (tenant as any).name,
+        metadataType: typeof rawMeta,
+        metadataHasDingtalkKey: !!(meta && typeof meta === 'object' && (meta as any).dingtalk),
+        hasAppKey: !!ding?.appKey,
+        hasAppSecret: !!ding?.appSecret,
+        hasAgentId: !!ding?.agentId,
+        dingRaw: ding ?? null,
+      });
+      return;
+    }
+
+    if (!params.assigneeUserIds?.length) {
+      console.warn('[WorkflowService] 跳过钉钉待办推送：当前节点没有 assignees', {
+        tenantId: params.tenantId,
+        nodeLabel: params.nodeLabel,
+        taskId: params.taskId,
+        recordId: params.recordId,
+      });
+      return;
+    }
+
+    const dingtalkAgentId = String(ding.agentId);
+
+    // 1) 解析 creatorUnionId（流程发起/操作用户的 dingtalkUserId）
+    let creatorUnionId: string | undefined = undefined;
+    const parseUserMetadata = (value: unknown): Record<string, unknown> => {
+      if (!value) return {};
+      if (typeof value === 'string') {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return {};
+        }
+      }
+      if (typeof value === 'object') return value as Record<string, unknown>;
+      return {};
+    };
+    if (params.creatorUserId) {
+      const creatorUser = await this.userRepository.findOne({
+        where: { id: params.creatorUserId },
+      });
+      creatorUnionId =
+        (parseUserMetadata(creatorUser?.metadata)?.dingtalkUnionId as any) ||
+        (parseUserMetadata(creatorUser?.metadata)?.dingtalkUserId as any);
+    }
+
+    // 2) 解析 executorUnionIds（所有 assignee 的 dingtalkUserId）
+    const executorUnionIds: string[] = [];
+    for (const assigneeUserId of params.assigneeUserIds) {
+      const systemUser = await this.userRepository.findOne({
+        where: { id: assigneeUserId },
+      });
+
+      if (!systemUser) {
+        console.warn('[WorkflowService] 找不到系统用户，无法推送钉钉待办', {
+          tenantId: params.tenantId,
+          assigneeUserId,
+        });
+        continue;
+      }
+
+      const dingtalkUnionId =
+        (parseUserMetadata(systemUser?.metadata)?.dingtalkUnionId as any) ||
+        (parseUserMetadata(systemUser?.metadata)?.dingtalkUserId as any);
+      if (!dingtalkUnionId) {
+        console.warn('[WorkflowService] 系统用户缺少 dingtalkUserId，无法推送钉钉待办', {
+          tenantId: params.tenantId,
+          assigneeUserId,
+        });
+        continue;
+      }
+
+      executorUnionIds.push(String(dingtalkUnionId));
+    }
+
+    // 若 creatorUnionId 没有拿到，兜底用第一个 executor（避免完全不推）
+    if (!creatorUnionId) creatorUnionId = executorUnionIds[0];
+
+    if (!creatorUnionId || executorUnionIds.length === 0) {
+      console.warn('[WorkflowService] 跳过钉钉待办推送：缺少 creator/executor unionId', {
+        tenantId: params.tenantId,
+        creatorUserId: params.creatorUserId,
+        creatorUnionId,
+        executorUnionCount: executorUnionIds.length,
+      });
+      return;
+    }
+
+    try {
+      console.log('[WorkflowService] 推送钉钉待办 v1.0 todo', {
+        tenantId: params.tenantId,
+        creatorUnionId,
+        executorUnionIds,
+        agentId: dingtalkAgentId,
+        nodeLabel: params.nodeLabel,
+        recordId: params.recordId,
+        sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
+      });
+
+      const portalBaseUrl = process.env.PORTAL_BASE_URL || 'http://localhost:3000';
+      const detailUrl = `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
+        params.recordId,
+      )}`;
+
+      await this.dingtalkService.addToDoTask({
+        appKey: String(ding.appKey),
+        appSecret: String(ding.appSecret),
+        creatorUnionId,
+        executorUnionIds,
+        title: `待办：${params.nodeLabel}`,
+        description: `流程记录：${params.recordId}`,
+        sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
+        sourceUrl: detailUrl,
+      });
+    } catch (e) {
+      const err: any = e;
+      console.error(
+        '[WorkflowService] 推送钉钉待办失败',
+        {
+          tenantId: params.tenantId,
+          taskId: params.taskId,
+          creatorUserId: params.creatorUserId,
+          creatorUnionId,
+          executorUnionIds,
+          status: err?.response?.status,
+          data: err?.response?.data,
+        },
+        err?.message || e,
+      );
+    }
+  }
 
   async start(params: { tenantId: string; formId: string; recordId: string; workflow: { nodes: WorkflowNode[]; edges: WorkflowEdge[]; workflowId?: string; workflowName?: string }; userId?: string; userName?: string }) {
     const { tenantId, formId, recordId, workflow, userId, userName } = params;
@@ -76,6 +248,23 @@ export class WorkflowService {
     }
 
     const saved = await this.instanceRepo.save(instance);
+
+    // 创建待办推送到钉钉（如果该流程第一个节点需要指派）
+    if (nextNode && (nextNode.type === 'approval' || nextNode.type === 'task')) {
+      const firstTask = (instance.tasks as any[])[0];
+      const assignees = nextNode.assignees || {};
+      const values: string[] = Array.isArray(assignees.values) ? assignees.values : [];
+      if (firstTask?.taskId) {
+        await this.pushDingtalkTodoIfNeeded({
+          tenantId,
+          taskId: String(firstTask.taskId),
+          nodeLabel: nextNode.label,
+          recordId: String(recordId),
+          assigneeUserIds: values.map(String),
+          creatorUserId: userId ? String(userId) : undefined,
+        });
+      }
+    }
     return { instanceId: saved.id, currentNodeId: saved.currentNodeId };
   }
 
@@ -220,6 +409,25 @@ export class WorkflowService {
       });
     }
 
-    return this.instanceRepo.save(inst);
+    const saved = await this.instanceRepo.save(inst);
+
+    // 推送待办到钉钉
+    if (nextNode.type === 'approval' || nextNode.type === 'task') {
+      const createdTask = (inst.tasks as any[]).find((t: any) => t.nodeId === nextNode.nodeId && t.status === 'pending');
+      const assignees = nextNode.assignees || {};
+      const values: string[] = Array.isArray(assignees.values) ? assignees.values : [];
+      if (createdTask?.taskId) {
+        await this.pushDingtalkTodoIfNeeded({
+          tenantId,
+          taskId: String(createdTask.taskId),
+          nodeLabel: nextNode.label,
+          recordId: String(inst.recordId),
+          assigneeUserIds: values.map(String),
+          creatorUserId: payload.userId ? String(payload.userId) : undefined,
+        });
+      }
+    }
+
+    return saved;
   }
 }

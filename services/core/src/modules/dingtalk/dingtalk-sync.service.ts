@@ -43,6 +43,19 @@ export class DingtalkSyncService {
     // 步骤1: 获取钉钉部门列表，找到根部门（公司）并创建/获取租户
     let tenant: TenantEntity | null = null;
     try {
+      const parseTenantMetadata = (value: unknown): Record<string, unknown> => {
+        if (!value) return {};
+        if (typeof value === 'string') {
+          try {
+            return JSON.parse(value);
+          } catch {
+            return {};
+          }
+        }
+        if (typeof value === 'object') return value as Record<string, unknown>;
+        return {};
+      };
+
       const dingTalkDepartments = await this.dingtalkService.getAllDepartments(
         appKey,
         appSecret,
@@ -95,14 +108,31 @@ export class DingtalkSyncService {
           },
         });
         tenant = await this.tenantRepository.save(existingTenant);
+        const savedMeta = parseTenantMetadata(tenant.metadata);
+        const savedDing = (savedMeta as any)?.dingtalk;
+        console.log('[DingtalkSync] 创建租户写入 metadata.dingtalk', {
+          tenantId: tenant.id,
+          hasAppKey: !!savedDing?.appKey,
+          hasAppSecret: !!savedDing?.appSecret,
+          hasAgentId: !!savedDing?.agentId,
+        });
       } else {
         // 更新租户元数据
+        const prevMeta = parseTenantMetadata(existingTenant.metadata);
         existingTenant.metadata = {
-          ...(existingTenant.metadata || {}),
+          ...prevMeta,
           source: 'dingtalk',
           syncedAt: new Date().toISOString(),
         };
         tenant = await this.tenantRepository.save(existingTenant);
+        const savedMeta = parseTenantMetadata(tenant.metadata);
+        const savedDing = (savedMeta as any)?.dingtalk;
+        console.log('[DingtalkSync] 更新租户写入 metadata.dingtalk', {
+          tenantId: tenant.id,
+          hasAppKey: !!savedDing?.appKey,
+          hasAppSecret: !!savedDing?.appSecret,
+          hasAgentId: !!savedDing?.agentId,
+        });
       }
       
       // 确保租户已创建
@@ -235,6 +265,13 @@ export class DingtalkSyncService {
 
           if (!systemUser) {
             // 创建新用户
+            const unionId =
+              (dtUser as any).unionid || (dtUser as any).unionId || undefined;
+            if (unionId && Math.random() < 0.02) {
+              const head = String(unionId).slice(0, 4);
+              const tail = String(unionId).slice(-4);
+              console.log('[DingtalkSync] 检测到 unionId', { userid: dtUser.userid, unionIdHead: head, unionIdTail: tail });
+            }
             const newUser = this.userRepository.create({
               account: `dingtalk_${dtUser.userid}`,
               name: dtUser.name || `钉钉用户_${dtUser.userid}`,
@@ -249,12 +286,26 @@ export class DingtalkSyncService {
               departmentId,
               metadata: {
                 dingtalkUserId: dtUser.userid,
+                dingtalkUnionId: unionId,
                 syncedAt: new Date().toISOString(),
               },
             } as Partial<UserEntity>);
             systemUser = await this.userRepository.save(newUser);
             results.users.created++;
           } else {
+            const parseUserMetadata = (value: unknown): Record<string, unknown> => {
+              if (!value) return {};
+              if (typeof value === 'string') {
+                try {
+                  return JSON.parse(value);
+                } catch {
+                  return {};
+                }
+              }
+              if (typeof value === 'object') return value as Record<string, unknown>;
+              return {};
+            };
+
             // 更新现有用户
             systemUser.name = dtUser.name || systemUser.name;
             systemUser.phone = dtUser.mobile || systemUser.phone;
@@ -265,8 +316,9 @@ export class DingtalkSyncService {
             systemUser.departmentId = departmentId || systemUser.departmentId;
             systemUser.tenantId = tenant.id; // 确保租户ID正确
             systemUser.metadata = {
-              ...(systemUser.metadata || {}),
+              ...parseUserMetadata(systemUser.metadata),
               dingtalkUserId: dtUser.userid,
+              dingtalkUnionId: (dtUser as any).unionid || (dtUser as any).unionId || (systemUser.metadata as any)?.dingtalkUnionId,
               syncedAt: new Date().toISOString(),
             };
             await this.userRepository.save(systemUser);

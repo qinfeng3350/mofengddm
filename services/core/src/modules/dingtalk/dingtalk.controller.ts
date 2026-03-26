@@ -14,6 +14,7 @@ import { DingtalkConfigDto } from './dto/dingtalk-config.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import type { DingtalkDepartment, DingtalkUser } from './types/dingtalk.types';
+import { DingtalkStreamService } from './dingtalk-stream.service';
 
 @Controller('api/dingtalk')
 @UseGuards(JwtAuthGuard)
@@ -21,6 +22,7 @@ export class DingtalkController {
   constructor(
     private readonly dingtalkService: DingtalkService,
     private readonly dingtalkSyncService: DingtalkSyncService,
+    private readonly dingtalkStreamService: DingtalkStreamService,
   ) {}
 
   /**
@@ -121,6 +123,20 @@ export class DingtalkController {
     return {
       success: true,
       data: users,
+    };
+  }
+
+  /**
+   * Stream 通道状态（用于管理页展示“是否连接成功”）
+   */
+  @Get('stream/status')
+  async getStreamStatus(): Promise<{
+    success: boolean;
+    data: ReturnType<DingtalkStreamService['getStatus']>;
+  }> {
+    return {
+      success: true,
+      data: this.dingtalkStreamService.getStatus(),
     };
   }
 

@@ -32,6 +32,19 @@ export const DingtalkIntegrationPage = () => {
   const [form] = Form.useForm<DingtalkConfig>();
   const [config, setConfig] = useState<DingtalkConfig | null>(null);
 
+  // Stream 通道状态（用于“Stream 模式推送”验证连接通道）
+  const {
+    data: streamStatus,
+    isLoading: streamStatusLoading,
+    refetch: refetchStreamStatus,
+  } = useQuery({
+    queryKey: ["dingtalk-stream-status"],
+    queryFn: async () => {
+      return dingtalkApi.getStreamStatus();
+    },
+    retry: false,
+  });
+
   // 测试连接
   const testConnectionMutation = useMutation({
     mutationFn: async (values: DingtalkConfig) => {
@@ -265,6 +278,36 @@ export const DingtalkIntegrationPage = () => {
           showIcon
           style={{ marginBottom: 24 }}
         />
+        <Alert
+          loading={streamStatusLoading}
+          type={
+            streamStatus?.data?.connected
+              ? "success"
+              : streamStatus?.data?.enabled
+                ? "warning"
+                : "info"
+          }
+          showIcon
+          style={{ marginBottom: 24 }}
+          message={`Stream 通道：${
+            streamStatus?.data?.connected
+              ? "已连接"
+              : streamStatus?.data?.enabled
+                ? "未连接"
+                : "未启用"
+          }（${streamStatus?.data?.registered ? "已注册" : "未注册"}）`}
+          description={
+            streamStatus?.data?.lastError
+              ? `错误：${streamStatus.data.lastError}`
+              : streamStatus?.data?.enabled
+                ? "请在钉钉后台点击“验证连接通道”，并等待连接成功"
+                : "请在后端设置 DINGTALK_STREAM_CLIENT_ID/DINGTALK_STREAM_CLIENT_SECRET 并重启服务"
+          }
+          closable
+          onClose={() => {
+            // 关闭后不再自动刷新；若需要可点刷新按钮
+          }}
+        />
 
         <Form
           form={form}
@@ -322,6 +365,12 @@ export const DingtalkIntegrationPage = () => {
                   >
                     同步到组织架构
                   </Button>
+                      <Button
+                        icon={<ReloadOutlined />}
+                        onClick={() => refetchStreamStatus().catch(() => {})}
+                      >
+                        刷新Stream状态
+                      </Button>
                 </>
               )}
             </Space>

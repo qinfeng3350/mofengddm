@@ -33,6 +33,22 @@ export interface DingtalkUsersResponse {
 
 export const dingtalkApi = {
   /**
+   * Stream 通道状态（是否已连接/已注册）
+   */
+  getStreamStatus: async () => {
+    return apiClient.get<{
+      success: boolean;
+      data: {
+        enabled: boolean;
+        hasCredentials: boolean;
+        connected: boolean;
+        registered: boolean;
+        lastError: string | null;
+      };
+    }>('/dingtalk/stream/status');
+  },
+
+  /**
    * 测试连接
    */
   testConnection: async (config: DingtalkConfig) => {

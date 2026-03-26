@@ -13,6 +13,7 @@ import type {
 @Injectable()
 export class DingtalkService {
   private readonly baseUrl = 'https://oapi.dingtalk.com';
+  private readonly todoV1BaseUrl = 'https://api.dingtalk.com';
 
   constructor(
     private readonly configService: ConfigService,
@@ -432,6 +433,91 @@ export class DingtalkService {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  /**
+   * 创建钉钉待办任务（给用户推送“工作台/待办”）。
+   *
+   * 接口：POST https://oapi.dingtalk.com/topapi/workrecord/add
+   * access_token 放在 query 参数里。
+   */
+  async addToDoTask(options: {
+    appKey: string;
+    appSecret: string;
+    // creator / executor 在 v1.0 todo 创建接口里使用 unionId 语义
+    creatorUnionId: string;
+    executorUnionIds: string[];
+    title: string;
+    description?: string;
+    dueTime?: number; // Unix秒（如果有）
+    sourceIdentifier?: string;
+    /**
+     * 用于待办详情跳转的 URL（新接口字段名：detailUrl）
+     * 旧接口可能使用 source_url/sourceIdentifier 等字段（这里保持兼容）。
+     */
+    sourceUrl?: string;
+  }): Promise<any> {
+    const {
+      appKey,
+      appSecret,
+      creatorUnionId,
+      executorUnionIds,
+      title,
+      description,
+      dueTime,
+      sourceIdentifier,
+      sourceUrl,
+    } = options;
+
+    const accessToken = await this.getAccessToken(appKey, appSecret);
+
+    /**
+     * 新版待办创建（v1.0 todo）
+     * 认证：header `x-acs-dingtalk-access-token`
+     * 入参：subject / creatorId / executorIds / detailUrl(appUrl/pcUrl)
+     *
+     * 这里暂时将 creatorId 设置为与 executor 相同的 unionId（即 userid），以满足路径 unionId = creatorId 的要求。
+     */
+    const body: any = {
+      subject: title,
+      creatorId: creatorUnionId,
+      executorIds: executorUnionIds,
+      detailUrl: {
+        appUrl: sourceUrl,
+        pcUrl: sourceUrl,
+      },
+    };
+
+    if (description) body.description = description;
+    if (dueTime) body.dueTime = dueTime * 1000; // dueTime 需要毫秒
+    if (sourceIdentifier) body.sourceId = sourceIdentifier;
+
+    const url = `${this.todoV1BaseUrl}/v1.0/todo/users/${encodeURIComponent(
+      creatorUnionId,
+    )}/tasks`;
+    const response = await firstValueFrom(
+      this.httpService.post(url, body, {
+        headers: {
+          'x-acs-dingtalk-access-token': accessToken,
+        },
+      }),
+    );
+
+    console.log('[DingtalkService] v1.0 todo create response', {
+      url,
+      errcode: response.data?.errcode,
+      errmsg: response.data?.errmsg,
+      response: response.data,
+    });
+
+    if (response.data?.errcode !== 0 && response.data?.errcode !== undefined) {
+      throw new HttpException(
+        `创建钉钉待办失败: ${response.data?.errmsg || 'unknown'} (错误码: ${response.data?.errcode})`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    return response.data;
   }
 
   /**

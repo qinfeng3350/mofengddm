@@ -8,6 +8,9 @@ export interface DingtalkDepartment {
 
 export interface DingtalkUser {
   userid: string;
+  // 新版 todo/事件接口使用的 unionId（不同调用场景字段名可能为 unionid/unionId）
+  unionid?: string;
+  unionId?: string;
   name: string;
   mobile?: string;
   email?: string;
