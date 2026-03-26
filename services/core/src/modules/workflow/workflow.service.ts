@@ -169,7 +169,19 @@ export class WorkflowService {
         sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
       });
 
-      const portalBaseUrl = process.env.PORTAL_BASE_URL || 'http://localhost:3000';
+      // 部署后 DingTalk 必须能通过公网域名访问 detailUrl
+      // 所以生产环境不要默认使用 localhost。
+      const portalBaseUrl =
+        process.env.PORTAL_BASE_URL ||
+        process.env.PORTAL_PUBLIC_BASE_URL ||
+        process.env.PUBLIC_PORTAL_URL;
+
+      if (!portalBaseUrl) {
+        throw new Error(
+          'Missing PORTAL_BASE_URL (or PORTAL_PUBLIC_BASE_URL / PUBLIC_PORTAL_URL) for DingTalk todo detailUrl. ' +
+            'Please set it to your portal domain, e.g. https://ddm.xxx.com',
+        );
+      }
       const detailUrl = `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
         params.recordId,
       )}`;
