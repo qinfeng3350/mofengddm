@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
-import { Card, Button, Empty, Spin, Tag, Space, Typography, Row, Col, Dropdown, Avatar, message, Popconfirm, Input, Tabs, Badge } from "antd";
+import { Card, Button, Empty, Spin, Tag, Space, Typography, Row, Col, Dropdown, Avatar, message, Popconfirm, Input, Tabs, Badge, Modal, Select } from "antd";
 import {
   PlusOutlined,
   EditOutlined,
@@ -35,6 +35,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { renderIcon } from "@/utils/iconRenderer";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import dayjs from "dayjs";
+import { authApi } from "@/api/auth";
 import "./HomePage.css";
 
 const { Title, Text } = Typography;
@@ -106,6 +107,58 @@ export const HomePage = () => {
   const handleLogout = () => {
     clearAuth();
     navigate("/login");
+  };
+
+  // 租户切换弹窗（同一账号可切换多个 tenantId）
+  const [tenantSwitchOpen, setTenantSwitchOpen] = useState(false);
+  const [tenantSwitchLoading, setTenantSwitchLoading] = useState(false);
+  const [tenantOptions, setTenantOptions] = useState<
+    Array<{ id: string; code?: string; name?: string }>
+  >([]);
+  const [targetTenantId, setTargetTenantId] = useState<string | null>(null);
+
+  const handleTenantSwitchOpen = async () => {
+    setTenantSwitchOpen(true);
+    setTenantSwitchLoading(true);
+    try {
+      const res = await authApi.getTenants();
+      const list = Array.isArray(res) ? res : (res as any)?.tenants ?? [];
+      message.info(`检测到可切换租户：${list.length} 个`);
+      setTenantOptions(list);
+      setTargetTenantId(list?.[0]?.id ?? null);
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || "获取租户列表失败";
+      message.error(msg);
+      console.error("获取租户列表失败:", e);
+    } finally {
+      setTenantSwitchLoading(false);
+    }
+  };
+
+  const handleTenantSwitchConfirm = async () => {
+    if (!targetTenantId) {
+      message.warning("请选择要切换的租户");
+      return;
+    }
+    setTenantSwitchLoading(true);
+    try {
+      const res = await authApi.switchTenant({ tenantId: targetTenantId });
+      if (res?.access_token && res?.user) {
+        // 刷新 token + 用户信息后重载页面
+        useAuthStore.getState().setAuth(res.access_token, res.user);
+        message.success("租户切换成功");
+        setTenantSwitchOpen(false);
+        window.location.reload();
+      } else {
+        message.error("租户切换失败：响应格式错误");
+      }
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || "租户切换失败";
+      message.error(msg);
+      console.error("租户切换失败:", e);
+    } finally {
+      setTenantSwitchLoading(false);
+    }
   };
 
   const handleCreateApp = () => {
@@ -214,12 +267,22 @@ export const HomePage = () => {
           <div style={{ fontWeight: 500 }}>
             {currentUserInfo?.tenant?.name || currentUserInfo?.tenant?.code || "默认租户"}
           </div>
-          <Button type="link" size="small" style={{ padding: 0, height: "auto" }}>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: "auto" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleTenantSwitchOpen();
+            }}
+          >
             切换
           </Button>
         </div>
       ),
-      disabled: true,
+      onClick: () => {
+        void handleTenantSwitchOpen();
+      },
     },
     { type: "divider" },
     {
@@ -601,6 +664,27 @@ export const HomePage = () => {
           </Card>
         </div>
       </div>
+
+      {/* 租户切换弹窗 */}
+      <Modal
+        title="切换租户"
+        open={tenantSwitchOpen}
+        onCancel={() => setTenantSwitchOpen(false)}
+        confirmLoading={tenantSwitchLoading}
+        onOk={() => void handleTenantSwitchConfirm()}
+        okText="切换"
+      >
+        <Select
+          value={targetTenantId ?? undefined}
+          onChange={(v) => setTargetTenantId(String(v))}
+          style={{ width: "100%" }}
+          placeholder="请选择要切换的租户"
+          options={tenantOptions.map((t) => ({
+            label: t.name ? (t.code ? `${t.name}(${t.code})` : t.name) : (t.code ? t.code : t.id),
+            value: t.id,
+          }))}
+        />
+      </Modal>
 
       <CreateAppModal
         open={createModalOpen}

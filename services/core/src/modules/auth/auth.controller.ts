@@ -121,11 +121,11 @@ export class AuthController {
    */
   @Get('tenants')
   async getTenants(@Request() req: any) {
-    const account = req.user?.account;
-    if (!account) {
-      throw new Error('无法确定当前账号');
+    const userId = req.user?.id || req.user?.userId;
+    if (!userId) {
+      throw new Error('无法确定当前用户');
     }
-    return this.authService.getTenantsByAccount(account);
+    return this.authService.getTenantsByUserId(String(userId));
   }
 
   /**
@@ -136,11 +136,11 @@ export class AuthController {
     @Request() req: any,
     @Body() body: { tenantId: string },
   ) {
-    const account = req.user?.account;
-    if (!account) {
-      throw new Error('无法确定当前账号');
+    const userId = req.user?.id || req.user?.userId;
+    if (!userId) {
+      throw new Error('无法确定当前用户');
     }
-    return this.authService.switchTenant(account, body.tenantId);
+    return this.authService.switchTenantByUserId(String(userId), body.tenantId);
   }
 }
 

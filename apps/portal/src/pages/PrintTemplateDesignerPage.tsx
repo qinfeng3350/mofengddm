@@ -176,12 +176,12 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   const queryClient = useQueryClient();
   
   // 获取当前用户信息（包括租户信息）
-  const { data: currentUserInfo } = useQuery({
+  const { data: currentUserInfo } = useQuery<any>({
     queryKey: ["current-user-info"],
     queryFn: async () => {
       try {
         const res = await apiClient.get("/auth/profile");
-        return res;
+        return res as any;
       } catch {
         return null;
       }
@@ -219,6 +219,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
       const res = await authApi.getTenants();
       // 兼容后端可能返回的结构：数组或 {tenants:[]}
       const list = Array.isArray(res) ? res : (res as any)?.tenants ?? [];
+      message.info(`检测到可切换租户：${list.length} 个`);
       setTenantOptions(list);
       setTargetTenantId(list?.[0]?.id ?? null);
     } catch (e: any) {
@@ -258,6 +259,10 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   // 处理用户菜单点击
   const handleUserMenuClick = ({ key }: { key: string }) => {
     switch (key) {
+      case "tenant-switch":
+        console.log("[PrintTemplateDesignerPage] tenant-switch menu onClick key:", key);
+        void handleTenantSwitchOpen();
+        break;
       case "site":
         // 在新标签页打开官网
         window.open("/", "_blank");
@@ -294,12 +299,14 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   };
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
+    // dnd-kit 当前类型定义里可能没有 shouldCancelOnStart 字段
+    // 这里用 any 兜底，避免 TS 类型报错影响页面编译
+    useSensor(PointerSensor as any, {
       activationConstraint: {
         distance: 8, // 移动8px后才激活拖拽
       },
       // 检查是否应该取消拖拽
-      shouldCancelOnStart: (event) => {
+      shouldCancelOnStart: (event: any) => {
         const target = event.target as HTMLElement;
         if (!target) return false;
         
@@ -326,7 +333,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
         
         return false;
       },
-    })
+    } as any)
   );
 
   // 获取表单定义
@@ -608,7 +615,9 @@ export const PrintTemplateDesignerPage: React.FC = () => {
                   key: "tenant-switch",
                   icon: <SwapOutlined />,
                   label: "切换",
+                  // 兜底：确保点击一定触发打开（有些 AntD Dropdown 使用场景下 menu.onClick 不触发）
                   onClick: () => {
+                    console.log("[PrintTemplateDesignerPage] tenant-switch item onClick");
                     void handleTenantSwitchOpen();
                   },
                 },
@@ -1034,7 +1043,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
         >
           {tenantOptions.map((t) => (
             <Select.Option key={t.id} value={t.id}>
-              {t.name || t.code || t.id}
+              {t.name ? (t.code ? `${t.name}(${t.code})` : t.name) : (t.code ? t.code : t.id)}
             </Select.Option>
           ))}
         </Select>

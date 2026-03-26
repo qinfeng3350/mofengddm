@@ -213,6 +213,46 @@ export class AuthService {
     return tenants.map((t) => ({ id: t.id, code: t.code, name: t.name }));
   }
 
+  /**
+   * 获取用户可切换的租户列表（优先按手机号归并租户）
+   * 如果同一手机号在多个 tenant 下都有用户记录，则返回这些 tenant 的列表。
+   */
+  async getTenantsByUserId(userId: string): Promise<
+    Array<{ id: string; code: string; name: string }>
+  > {
+    const me = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'account', 'tenantId', 'phone'],
+    });
+
+    if (!me) {
+      throw new BadRequestException('无法确定当前用户');
+    }
+
+    // 1) 优先用 phone：同一手机号跨 tenant 时应能看到多个租户
+    if (me.phone) {
+      const users = await this.userRepository.find({
+        where: { phone: me.phone },
+        select: ['tenantId'],
+      });
+
+      const tenantIds = Array.from(
+        new Set(users.map((u) => u.tenantId).filter((id): id is string => !!id)),
+      );
+
+      if (tenantIds.length > 0) {
+        const tenants = await this.tenantRepository.find({
+          where: { id: In(tenantIds) as any },
+          select: ['id', 'code', 'name'],
+        });
+        return tenants.map((t) => ({ id: t.id, code: t.code, name: t.name }));
+      }
+    }
+
+    // 2) fallback：没有 phone 或归并不到时，用 account
+    return this.getTenantsByAccount(me.account);
+  }
+
   async switchTenant(account: string, tenantId: string): Promise<{ access_token: string; user: any }> {
     const targetUser = await this.userRepository.findOne({
       where: { account, tenantId },
@@ -235,6 +275,55 @@ export class AuthService {
     const token = this.jwtService.sign(payload);
     return {
       access_token: token,
+      user: this.buildUserDto(targetUser, tenant),
+    };
+  }
+
+  /**
+   * 切换租户：优先用 phone 在目标 tenant 下找对应用户；找不到再回退 account+tenantId。
+   */
+  async switchTenantByUserId(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ access_token: string; user: any }> {
+    const me = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'account', 'tenantId', 'phone'],
+    });
+
+    if (!me) {
+      throw new BadRequestException('无法确定当前用户');
+    }
+
+    let targetUser =
+      (me.phone
+        ? await this.userRepository.findOne({
+            where: { phone: me.phone, tenantId },
+          })
+        : null) ?? null;
+
+    if (!targetUser) {
+      targetUser = await this.userRepository.findOne({
+        where: { account: me.account, tenantId },
+      });
+    }
+
+    if (!targetUser) {
+      throw new BadRequestException('未找到该账号对应的目标租户用户');
+    }
+
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: targetUser.tenantId },
+      select: ['id', 'code', 'name'],
+    });
+
+    if (!tenant) {
+      throw new BadRequestException('目标租户不存在');
+    }
+
+    const payload = this.buildTokenPayload(targetUser);
+    return {
+      access_token: this.jwtService.sign(payload),
       user: this.buildUserDto(targetUser, tenant),
     };
   }
