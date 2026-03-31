@@ -21,6 +21,79 @@ export class DingtalkService {
   ) {}
 
   /**
+   * OAuth2：使用 code 换取 userAccessToken（网页扫码 / H5 免登通用）
+   * POST https://api.dingtalk.com/v1.0/oauth2/userAccessToken
+   */
+  async exchangeOAuthUserAccessToken(options: {
+    clientId: string;
+    clientSecret: string;
+    code: string;
+  }): Promise<{ accessToken: string; expireIn: number; refreshToken?: string }> {
+    const url = `${this.todoV1BaseUrl}/v1.0/oauth2/userAccessToken`;
+    const body = {
+      clientId: options.clientId,
+      clientSecret: options.clientSecret,
+      code: options.code,
+      grantType: 'authorization_code',
+    };
+
+    try {
+      const resp = await firstValueFrom(this.httpService.post(url, body));
+      const data = resp.data || {};
+      if (!data.accessToken) {
+        throw new HttpException(
+          `钉钉换取 userAccessToken 失败: ${data.message || 'unknown'}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      return {
+        accessToken: String(data.accessToken),
+        expireIn: Number(data.expireIn || 0),
+        refreshToken: data.refreshToken ? String(data.refreshToken) : undefined,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        `钉钉换取 userAccessToken 失败: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * OAuth2：获取当前用户信息
+   * GET https://api.dingtalk.com/v1.0/contact/users/me
+   * header: x-acs-dingtalk-access-token = userAccessToken
+   */
+  async getOAuthUserInfo(options: {
+    userAccessToken: string;
+  }): Promise<{ unionId?: string; openId?: string; nick?: string; avatarUrl?: string }> {
+    const url = `${this.todoV1BaseUrl}/v1.0/contact/users/me`;
+    try {
+      const resp = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            'x-acs-dingtalk-access-token': options.userAccessToken,
+          },
+        }),
+      );
+      const data = resp.data || {};
+      return {
+        unionId: data.unionId ? String(data.unionId) : undefined,
+        openId: data.openId ? String(data.openId) : undefined,
+        nick: data.nick ? String(data.nick) : undefined,
+        avatarUrl: data.avatarUrl ? String(data.avatarUrl) : undefined,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        `钉钉获取用户信息失败: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * 获取钉钉访问令牌
    */
   async getAccessToken(appKey: string, appSecret: string): Promise<string> {

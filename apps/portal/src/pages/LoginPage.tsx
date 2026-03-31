@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Form, Input, Button, message, Card, Tabs, Typography, Space, Divider } from "antd";
 import {
@@ -13,6 +13,7 @@ import {
   PhoneOutlined,
 } from "@ant-design/icons";
 import { authApi } from "@/api/auth";
+import { dingtalkLoginApi } from "@/api/dingtalk-login";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import "./LoginPage.css";
@@ -24,9 +25,53 @@ export const LoginPage = () => {
   const navigate = useNavigate();
   const { setAuth } = useAuthStore();
   const [loading, setLoading] = useState(false);
+  const [dingLoading, setDingLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"login" | "register">("login");
   const [loginForm] = Form.useForm();
   const [registerForm] = Form.useForm();
+
+  const urlTenant = useMemo(() => {
+    const sp = new URLSearchParams(window.location.search);
+    return {
+      tenantId: sp.get("tenantId") || undefined,
+      tenantCode: sp.get("tenantCode") || undefined,
+      token: sp.get("token") || undefined,
+    };
+  }, []);
+
+  useEffect(() => {
+    // 钉钉网页登录回调会把 token 带回到 /login?token=...
+    if (urlTenant.token) {
+      try {
+        setAuth(urlTenant.token, { id: "", account: "", name: "", email: "", tenantId: urlTenant.tenantId } as any);
+        message.success("钉钉登录成功");
+        navigate("/home", { replace: true });
+      } catch (e: any) {
+        message.error(e?.message || "钉钉登录失败");
+      }
+    }
+  }, [navigate, setAuth, urlTenant.tenantId, urlTenant.token]);
+
+  const onDingTalkScanLogin = async () => {
+    try {
+      setDingLoading(true);
+      const resp = await dingtalkLoginApi.getWebUrl({
+        tenantId: urlTenant.tenantId,
+        tenantCode: urlTenant.tenantCode,
+        redirectUri: `${window.location.origin}/login`,
+      });
+      const url = resp?.data?.url;
+      if (!url) {
+        message.error("获取钉钉登录地址失败");
+        return;
+      }
+      window.location.href = url;
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || e?.message || "钉钉扫码登录失败");
+    } finally {
+      setDingLoading(false);
+    }
+  };
 
   const onLogin = async (values: { account: string; password: string }) => {
     try {
@@ -156,6 +201,16 @@ export const LoginPage = () => {
                     登录
                   </Button>
                 </Form.Item>
+                <Form.Item>
+                  <Button
+                    block
+                    onClick={onDingTalkScanLogin}
+                    loading={dingLoading}
+                    disabled={loading}
+                  >
+                    钉钉扫码登录
+                  </Button>
+                </Form.Item>
                 <div className="forgot-password">
                   <a href="#" onClick={(e) => e.preventDefault()}>
                     忘记密码？
@@ -247,11 +302,7 @@ export const LoginPage = () => {
             </Form>
           )}
 
-          <div className="login-footer">
-            <Text type="secondary" className="default-credentials">
-              默认: admin/admin123 (请登录后尽快修改)
-            </Text>
-          </div>
+          <div className="login-footer" />
         </div>
 
         {/* 右侧品牌展示区域 */}
