@@ -261,10 +261,10 @@ export class DingtalkSyncService {
             where: { account: `dingtalk_${dtUser.userid}` },
           });
 
-          // 如果通过账号没找到，尝试通过手机号查找（不限定租户，避免重复账号）
+          // 如果通过账号没找到，尝试通过手机号查找（必须限定当前租户，避免跨租户串数据）
           if (!systemUser && dtUser.mobile) {
             systemUser = await this.userRepository.findOne({
-              where: { phone: dtUser.mobile },
+              where: { phone: dtUser.mobile, tenantId: tenant.id },
             });
           }
 
