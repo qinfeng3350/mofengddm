@@ -61,11 +61,8 @@ export class DingtalkLoginService {
           '未找到可用的钉钉租户配置，请先在 tenants.metadata.dingtalk 配置 appKey/appSecret',
         );
       }
-      if (candidates.length > 1) {
-        throw new BadRequestException(
-          '检测到多个已配置钉钉的租户，请传 tenantId 或 tenantCode 指定登录租户',
-        );
-      }
+      // 如果配置了多个租户，为了“登录不需要额外填写”，默认选择最近更新的那一个
+      // 仍允许通过 tenantId/tenantCode 显式指定租户以避免登录到错误租户
       return candidates[0];
     }
     const tenant = await this.tenantRepository.findOne({
