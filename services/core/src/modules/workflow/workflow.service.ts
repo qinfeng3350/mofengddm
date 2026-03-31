@@ -182,9 +182,37 @@ export class WorkflowService {
             'Please set it to your portal domain, e.g. https://ddm.xxx.com',
         );
       }
-      const detailUrl = `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
-        params.recordId,
-      )}`;
+
+      // DingTalk 待办链接必须指向“前端真实存在的记录列表入口”
+      // 当前前端路由为：/app/:appId（RuntimeListPage）
+      // 需要通过 workflow_instance.recordId -> formId -> form_definition.application_id 解析出 appId
+      let appId: string | null = null;
+      try {
+        const inst = await this.instanceRepo.findOne({
+          where: { tenantId: params.tenantId, recordId: params.recordId },
+        });
+        if (inst?.formId) {
+          const formDef = await this.formRepo.findOne({
+            where: { tenantId: params.tenantId, formId: inst.formId },
+          });
+          appId = formDef?.applicationId ? String(formDef.applicationId) : null;
+        }
+      } catch (e) {
+        // 解析失败不影响主流程，fallback 到原来的 runtime/list（但可能 404）
+        console.warn('[WorkflowService] 解析 appId 失败，使用 fallback runtime/list', {
+          tenantId: params.tenantId,
+          recordId: params.recordId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+
+      const detailUrl = appId
+        ? `${portalBaseUrl}/app/${encodeURIComponent(appId)}?recordId=${encodeURIComponent(
+            params.recordId,
+          )}`
+        : `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
+            params.recordId,
+          )}`;
 
       await this.dingtalkService.addToDoTask({
         appKey: String(ding.appKey),
