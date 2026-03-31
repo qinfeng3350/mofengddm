@@ -521,6 +521,53 @@ export class DingtalkService {
   }
 
   /**
+   * 更新钉钉待办执行者完成状态（v1.0 todo）。
+   *
+   * 接口：PUT https://api.dingtalk.com/v1.0/todo/users/{unionId}/tasks/{taskId}/executorStatus
+   * - unionId: 资源归属用户 unionId（一般为创建待办时的 creatorUnionId）
+   * - executorStatusList[].id: 执行者 unionId
+   * - isDone: true 标记完成
+   * - operatorId（query，可选）: 操作人 unionId
+   */
+  async updateTodoExecutorStatus(options: {
+    appKey: string;
+    appSecret: string;
+    unionId: string;
+    taskId: string;
+    executorUnionIds: string[];
+    isDone: boolean;
+    operatorUnionId?: string;
+  }): Promise<any> {
+    const { appKey, appSecret, unionId, taskId, executorUnionIds, isDone, operatorUnionId } =
+      options;
+
+    const accessToken = await this.getAccessToken(appKey, appSecret);
+    const url = `${this.todoV1BaseUrl}/v1.0/todo/users/${encodeURIComponent(
+      unionId,
+    )}/tasks/${encodeURIComponent(taskId)}/executorStatus`;
+
+    const body = {
+      executorStatusList: executorUnionIds.map((id) => ({ id, isDone })),
+    };
+
+    const response = await firstValueFrom(
+      this.httpService.put(url, body, {
+        params: operatorUnionId ? { operatorId: operatorUnionId } : undefined,
+        headers: {
+          'x-acs-dingtalk-access-token': accessToken,
+        },
+      }),
+    );
+
+    console.log('[DingtalkService] v1.0 todo update executorStatus response', {
+      url,
+      response: response.data,
+    });
+
+    return response.data;
+  }
+
+  /**
    * 获取单个部门详情
    */
   async getDepartment(

@@ -43,12 +43,19 @@ export class WorkflowService {
     recordId: string;
     assigneeUserIds: string[];
     creatorUserId?: string; // 流程发起/操作用户（系统用户id）
-  }) {
+  }): Promise<
+    | {
+        todoTaskId: string;
+        creatorUnionId: string;
+        executorUnionIds: string[];
+      }
+    | null
+  > {
     const tenant = await this.tenantRepository.findOne({
       where: { id: params.tenantId },
     });
 
-    if (!tenant) return;
+    if (!tenant) return null;
 
     const rawMeta = tenant.metadata as any;
     // tenants.metadata 在 DB 层是 TEXT，TypeORM 有时会返回字符串，需要兜底 parse
@@ -78,7 +85,7 @@ export class WorkflowService {
         hasAgentId: !!ding?.agentId,
         dingRaw: ding ?? null,
       });
-      return;
+      return null;
     }
 
     if (!params.assigneeUserIds?.length) {
@@ -88,7 +95,7 @@ export class WorkflowService {
         taskId: params.taskId,
         recordId: params.recordId,
       });
-      return;
+      return null;
     }
 
     const dingtalkAgentId = String(ding.agentId);
@@ -155,7 +162,7 @@ export class WorkflowService {
         creatorUnionId,
         executorUnionCount: executorUnionIds.length,
       });
-      return;
+      return null;
     }
 
     try {
@@ -214,7 +221,7 @@ export class WorkflowService {
             params.recordId,
           )}`;
 
-      await this.dingtalkService.addToDoTask({
+      const created = await this.dingtalkService.addToDoTask({
         appKey: String(ding.appKey),
         appSecret: String(ding.appSecret),
         creatorUnionId,
@@ -224,6 +231,15 @@ export class WorkflowService {
         sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
         sourceUrl: detailUrl,
       });
+
+      if (created?.id) {
+        return {
+          todoTaskId: String(created.id),
+          creatorUnionId,
+          executorUnionIds,
+        };
+      }
+      return null;
     } catch (e) {
       const err: any = e;
       console.error(
@@ -239,6 +255,7 @@ export class WorkflowService {
         },
         err?.message || e,
       );
+      return null;
     }
   }
 
@@ -295,7 +312,7 @@ export class WorkflowService {
       const assignees = nextNode.assignees || {};
       const values: string[] = Array.isArray(assignees.values) ? assignees.values : [];
       if (firstTask?.taskId) {
-        await this.pushDingtalkTodoIfNeeded({
+        const dt = await this.pushDingtalkTodoIfNeeded({
           tenantId,
           taskId: String(firstTask.taskId),
           nodeLabel: nextNode.label,
@@ -303,6 +320,15 @@ export class WorkflowService {
           assigneeUserIds: values.map(String),
           creatorUserId: userId ? String(userId) : undefined,
         });
+
+        if (dt?.todoTaskId) {
+          (firstTask as any).dingtalkTodo = {
+            taskId: dt.todoTaskId,
+            creatorUnionId: dt.creatorUnionId,
+            executorUnionIds: dt.executorUnionIds,
+          };
+          await this.instanceRepo.save(instance);
+        }
       }
     }
     return { instanceId: saved.id, currentNodeId: saved.currentNodeId };
@@ -398,6 +424,62 @@ export class WorkflowService {
       return this.instanceRepo.save(inst);
     }
 
+    // 当前节点“同意”后：如存在钉钉待办，更新执行者状态为完成（使钉钉待办自动移除/完成）
+    if (payload.action === 'approve' && task && (task as any).dingtalkTodo?.taskId) {
+      try {
+        const tenantEntity = await this.tenantRepository.findOne({ where: { id: tenantId } });
+        const rawMeta = (tenantEntity as any)?.metadata;
+        const meta: any =
+          typeof rawMeta === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(rawMeta);
+                } catch {
+                  return {};
+                }
+              })()
+            : rawMeta || {};
+        const ding = meta?.dingtalk;
+
+        const parseUserMetadata = (value: unknown): Record<string, unknown> => {
+          if (!value) return {};
+          if (typeof value === 'string') {
+            try {
+              return JSON.parse(value);
+            } catch {
+              return {};
+            }
+          }
+          if (typeof value === 'object') return value as Record<string, unknown>;
+          return {};
+        };
+
+        let operatorUnionIdValue: string | undefined = undefined;
+        if (payload.userId) {
+          const operatorUser = await this.userRepository.findOne({
+            where: { id: String(payload.userId) },
+          });
+          const om = parseUserMetadata(operatorUser?.metadata);
+          operatorUnionIdValue = (om as any)?.dingtalkUnionId || (om as any)?.dingtalkUserId;
+        }
+
+        if (ding?.appKey && ding?.appSecret) {
+          const dt = (task as any).dingtalkTodo;
+          await this.dingtalkService.updateTodoExecutorStatus({
+            appKey: String(ding.appKey),
+            appSecret: String(ding.appSecret),
+            unionId: String(dt.creatorUnionId),
+            taskId: String(dt.taskId),
+            executorUnionIds: Array.isArray(dt.executorUnionIds) ? dt.executorUnionIds.map(String) : [],
+            isDone: true,
+            operatorUnionId: operatorUnionIdValue ? String(operatorUnionIdValue) : undefined,
+          });
+        }
+      } catch (e) {
+        console.warn('[WorkflowService] 更新钉钉待办完成状态失败', (e as any)?.message || e);
+      }
+    }
+
     // 计算下一个节点
     const edge = edges.find(e => e.source === currentNode.nodeId);
     const nextNodeId = edge?.target;
@@ -457,7 +539,7 @@ export class WorkflowService {
       const assignees = nextNode.assignees || {};
       const values: string[] = Array.isArray(assignees.values) ? assignees.values : [];
       if (createdTask?.taskId) {
-        await this.pushDingtalkTodoIfNeeded({
+        const dt = await this.pushDingtalkTodoIfNeeded({
           tenantId,
           taskId: String(createdTask.taskId),
           nodeLabel: nextNode.label,
@@ -465,6 +547,15 @@ export class WorkflowService {
           assigneeUserIds: values.map(String),
           creatorUserId: payload.userId ? String(payload.userId) : undefined,
         });
+
+        if (dt?.todoTaskId) {
+          (createdTask as any).dingtalkTodo = {
+            taskId: dt.todoTaskId,
+            creatorUnionId: dt.creatorUnionId,
+            executorUnionIds: dt.executorUnionIds,
+          };
+          await this.instanceRepo.save(inst);
+        }
       }
     }
 
