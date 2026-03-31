@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Card,
   Form,
@@ -31,6 +31,22 @@ const { TextArea } = Input;
 export const DingtalkIntegrationPage = () => {
   const [form] = Form.useForm<DingtalkConfig>();
   const [config, setConfig] = useState<DingtalkConfig | null>(null);
+
+  // 加载当前租户已保存的钉钉配置（每个租户独立）
+  useEffect(() => {
+    void (async () => {
+      try {
+        const resp = await dingtalkApi.getTenantConfig();
+        const saved = resp?.data;
+        if (saved?.appKey) {
+          form.setFieldsValue(saved);
+          setConfig(saved);
+        }
+      } catch {
+        // 忽略：未配置/无权限等
+      }
+    })();
+  }, [form]);
 
   // Stream 通道状态（用于“Stream 模式推送”验证连接通道）
   const {
@@ -109,6 +125,17 @@ export const DingtalkIntegrationPage = () => {
       testConnectionMutation.mutate(values);
     } catch (error) {
       // 表单验证失败
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    try {
+      const values = await form.validateFields();
+      await dingtalkApi.saveTenantConfig(values);
+      setConfig(values);
+      message.success("已保存到当前租户配置");
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || error?.message || "保存失败");
     }
   };
 
@@ -340,6 +367,9 @@ export const DingtalkIntegrationPage = () => {
 
           <Form.Item>
             <Space>
+              <Button type="primary" onClick={handleSaveConfig}>
+                保存配置
+              </Button>
               <Button
                 type="primary"
                 icon={<CheckCircleOutlined />}

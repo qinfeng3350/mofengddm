@@ -25,6 +25,7 @@ export class DingtalkSyncService {
   async syncOrganization(
     appKey: string,
     appSecret: string,
+    agentId?: string,
   ): Promise<{
     departments: { total: number; created: number; updated: number; errors: any[] };
     users: { total: number; created: number; updated: number; errors: any[] };
@@ -105,6 +106,11 @@ export class DingtalkSyncService {
           metadata: {
             source: 'dingtalk',
             syncedAt: new Date().toISOString(),
+            dingtalk: {
+              appKey,
+              appSecret,
+              agentId: agentId || undefined,
+            },
           },
         });
         tenant = await this.tenantRepository.save(existingTenant);
@@ -123,6 +129,12 @@ export class DingtalkSyncService {
           ...prevMeta,
           source: 'dingtalk',
           syncedAt: new Date().toISOString(),
+          dingtalk: {
+            ...(prevMeta as any)?.dingtalk,
+            appKey,
+            appSecret,
+            ...(agentId ? { agentId } : {}),
+          },
         };
         tenant = await this.tenantRepository.save(existingTenant);
         const savedMeta = parseTenantMetadata(tenant.metadata);

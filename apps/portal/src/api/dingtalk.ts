@@ -49,6 +49,20 @@ export const dingtalkApi = {
   },
 
   /**
+   * 获取当前租户的钉钉配置（从后端 tenants.metadata.dingtalk 读取）
+   */
+  getTenantConfig: async () => {
+    return apiClient.get<{ success: boolean; data: DingtalkConfig }>("/dingtalk/config");
+  },
+
+  /**
+   * 保存当前租户的钉钉配置（写入 tenants.metadata.dingtalk）
+   */
+  saveTenantConfig: async (config: DingtalkConfig) => {
+    return apiClient.post<{ success: boolean }>("/dingtalk/config", config);
+  },
+
+  /**
    * 测试连接
    */
   testConnection: async (config: DingtalkConfig) => {

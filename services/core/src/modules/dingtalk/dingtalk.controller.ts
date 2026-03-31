@@ -15,6 +15,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import type { DingtalkDepartment, DingtalkUser } from './types/dingtalk.types';
 import { DingtalkStreamService } from './dingtalk-stream.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { TenantEntity } from '../../database/entities';
 
 @Controller('api/dingtalk')
 @UseGuards(JwtAuthGuard)
@@ -23,6 +26,8 @@ export class DingtalkController {
     private readonly dingtalkService: DingtalkService,
     private readonly dingtalkSyncService: DingtalkSyncService,
     private readonly dingtalkStreamService: DingtalkStreamService,
+    @InjectRepository(TenantEntity)
+    private readonly tenantRepository: Repository<TenantEntity>,
   ) {}
 
   /**
@@ -141,6 +146,71 @@ export class DingtalkController {
   }
 
   /**
+   * 获取当前租户的钉钉配置（从 tenants.metadata.dingtalk 读取）
+   */
+  @Get('config')
+  async getTenantConfig(@Request() req: any) {
+    const tenantId = String(req.user?.tenantId || '');
+    const tenant = await this.tenantRepository.findOne({ where: { id: tenantId } });
+    const rawMeta = (tenant as any)?.metadata;
+    const meta: any =
+      typeof rawMeta === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(rawMeta);
+            } catch {
+              return {};
+            }
+          })()
+        : rawMeta || {};
+    const ding = meta?.dingtalk || {};
+    return {
+      success: true,
+      data: {
+        appKey: ding?.appKey ? String(ding.appKey) : '',
+        appSecret: ding?.appSecret ? String(ding.appSecret) : '',
+        agentId: ding?.agentId ? String(ding.agentId) : '',
+      },
+    };
+  }
+
+  /**
+   * 保存当前租户的钉钉配置（写入 tenants.metadata.dingtalk）
+   */
+  @Post('config')
+  async saveTenantConfig(@Request() req: any, @Body() config: DingtalkConfigDto) {
+    const tenantId = String(req.user?.tenantId || '');
+    const tenant = await this.tenantRepository.findOne({ where: { id: tenantId } });
+    if (!tenant) {
+      return { success: false, message: '租户不存在' };
+    }
+    const rawMeta = (tenant as any)?.metadata;
+    const meta: any =
+      typeof rawMeta === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(rawMeta);
+            } catch {
+              return {};
+            }
+          })()
+        : rawMeta || {};
+
+    tenant.metadata = {
+      ...meta,
+      dingtalk: {
+        ...(meta?.dingtalk || {}),
+        appKey: config.appKey,
+        appSecret: config.appSecret,
+        ...(config.agentId ? { agentId: config.agentId } : {}),
+      },
+      dingtalkUpdatedAt: new Date().toISOString(),
+    };
+    await this.tenantRepository.save(tenant);
+    return { success: true };
+  }
+
+  /**
    * 根据用户ID获取用户详情
    */
   @Post('users/:userId')
@@ -168,6 +238,7 @@ export class DingtalkController {
     const results = await this.dingtalkSyncService.syncOrganization(
       config.appKey,
       config.appSecret,
+      config.agentId,
     );
 
     const hasPartialSuccess =
