@@ -7,7 +7,10 @@ module.exports = {
     exec_mode: 'fork',
     env: {
       NODE_ENV: 'production',
-      PORT: 4000
+      PORT: 4000,
+      // 给 DingTalk 待办生成的 detailUrl 使用公网域名（不要用 localhost）
+      PORTAL_BASE_URL: 'https://ddm.mofeng33506.xyz',
+      PORTAL_PUBLIC_BASE_URL: 'https://ddm.mofeng33506.xyz',
     },
     error_file: './logs/pm2-error.log',
     out_file: './logs/pm2-out.log',
