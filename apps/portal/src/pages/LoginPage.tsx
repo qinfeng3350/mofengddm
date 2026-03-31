@@ -42,13 +42,29 @@ export const LoginPage = () => {
   useEffect(() => {
     // 钉钉网页登录回调会把 token 带回到 /login?token=...
     if (urlTenant.token) {
-      try {
-        setAuth(urlTenant.token, { id: "", account: "", name: "", email: "", tenantId: urlTenant.tenantId } as any);
-        message.success("钉钉登录成功");
-        navigate("/home", { replace: true });
-      } catch (e: any) {
-        message.error(e?.message || "钉钉登录失败");
-      }
+      void (async () => {
+        try {
+          // 先把 token 写入 store，确保后续 profile 请求携带 Authorization
+          setAuth(urlTenant.token, {
+            id: "temp",
+            account: "dingtalk",
+            name: "DingTalk",
+            email: "dingtalk@local",
+            tenantId: urlTenant.tenantId,
+          } as any);
+
+          // 立刻拉取一次 profile，补全用户信息（并验证 token 可用）
+          const profile = await authApi.getProfile();
+          if (profile?.id) {
+            setAuth(urlTenant.token, profile as any);
+          }
+
+          message.success("钉钉登录成功");
+          navigate("/home", { replace: true });
+        } catch (e: any) {
+          message.error(e?.response?.data?.message || e?.message || "钉钉登录失败");
+        }
+      })();
     }
   }, [navigate, setAuth, urlTenant.tenantId, urlTenant.token]);
 
@@ -58,7 +74,7 @@ export const LoginPage = () => {
       const resp = await dingtalkLoginApi.getWebUrl({
         tenantId: urlTenant.tenantId,
         tenantCode: urlTenant.tenantCode,
-        redirectUri: `${window.location.origin}/login`,
+        redirectUri: `${window.location.origin}/api/dingtalk/login/callback`,
       });
       const url = resp?.data?.url;
       if (!url) {

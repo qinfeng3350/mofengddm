@@ -102,7 +102,7 @@ export class DingtalkLoginService {
     const baseRedirect =
       options.redirectUri ||
       (this.configService.get<string>('PORTAL_BASE_URL')
-        ? `${this.configService.get<string>('PORTAL_BASE_URL')}/login/dingtalk/callback`
+        ? `${this.configService.get<string>('PORTAL_BASE_URL')}/api/dingtalk/login/callback`
         : undefined);
 
     if (!baseRedirect) {
