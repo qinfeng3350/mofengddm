@@ -3,7 +3,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  /* 登录页背景图：从 public 下的 beijing.png 加载 */
+  background: url("/beijing.png") center / cover no-repeat;
   position: relative;
   overflow: hidden;
   padding: 20px;
@@ -180,7 +181,7 @@
 /* 右侧品牌展示区域 */
 .login-right {
   flex: 1;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: url("/beijing.png") center / cover no-repeat;
   padding: 50px 40px;
   display: flex;
   align-items: center;

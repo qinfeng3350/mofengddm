@@ -6,12 +6,16 @@ interface DraggableFieldItemProps {
   fieldId: string;
   label: string;
   type?: string;
+  onClick?: () => void;
+  rightSlot?: React.ReactNode;
 }
 
 export const DraggableFieldItem: React.FC<DraggableFieldItemProps> = ({
   fieldId,
   label,
   type,
+  onClick,
+  rightSlot,
 }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `field-${fieldId}`,
@@ -43,13 +47,23 @@ export const DraggableFieldItem: React.FC<DraggableFieldItemProps> = ({
         display: "flex",
         alignItems: "center",
         gap: 8,
+        justifyContent: "space-between",
         ...style,
       }}
       {...listeners}
       {...attributes}
+      onDoubleClick={(e) => {
+        if (!onClick) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
     >
-      {label}
-      {type === "user" && <UserOutlined />}
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        {label}
+        {type === "user" && <UserOutlined />}
+      </span>
+      {rightSlot}
     </div>
   );
 };

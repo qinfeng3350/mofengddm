@@ -1,3 +1,41 @@
+/* 列宽拖拽手柄（react-resizable），贴在表头单元格右侧 */
+.colResizeHandle {
+  position: absolute !important;
+  right: -4px !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 8px !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  cursor: col-resize !important;
+  z-index: 12;
+  background: transparent;
+}
+
+.tableContainer :global(.react-resizable-handle):hover {
+  background: rgba(24, 144, 255, 0.12);
+}
+
+/* 表头单元格相对定位，列宽拖拽手柄才能贴在列右侧 */
+.listFrame :global(.ant-table-thead > tr > th) {
+  position: relative;
+}
+
+/* 列表外框：与参考产品一致，表格+分页在同一可视区域内 */
+.listFrame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
 /* 主容器 - 对应 tg-pane-bodyer */
 .tableContainer {
   width: 100%;
@@ -26,57 +64,64 @@
   overflow: hidden;
 }
 
-/* 表格主体区域 - 允许滚动但隐藏水平滚动条 */
-.tableContainer :global(.ant-table-body) {
+/* 刷新首屏时，antd Table 的内部包裹层可能会“塌高”，导致表体没撑满、横向滚动条浮在中间。
+ * 这里仅把关键层统一为纵向 flex 链路，并保持 min-height:0，确保 scroll.y 能稳定生效。 */
+.listFrame :global(.ant-spin-nested-loading),
+.listFrame :global(.ant-spin-container),
+.listFrame :global(.ant-table-wrapper),
+.listFrame :global(.ant-table) {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.listFrame :global(.ant-table-container) {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.listFrame :global(.ant-table-body) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/*
+ * 表体滚动：横向用底部细条同步，不在表内显示粗横向原生条（参考常见后台列表）
+ * 纵向保留细滚动条
+ */
+.listFrame :global(.ant-table-body) {
+  /* 允许横向滚动（给底部细条控制 scrollLeft），但隐藏原生横向滚动条，避免覆盖数据 */
   overflow-x: auto !important;
   overflow-y: auto !important;
-  /* 隐藏水平滚动条但保留滚动功能 */
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: rgba(0, 0, 0, 0.22) rgba(0, 0, 0, 0.04);
 }
 
-/* Chrome/Safari - 隐藏水平滚动条但保留滚动功能 */
-.tableContainer :global(.ant-table-body)::-webkit-scrollbar {
-  width: 12px; /* 垂直滚动条宽度 */
-  height: 0; /* 隐藏水平滚动条 */
+/* WebKit：隐藏横向原生条（只隐藏横向，不影响纵向） */
+.listFrame :global(.ant-table-body)::-webkit-scrollbar {
+  width: 5px;  /* 纵向细条 */
+  height: 0;   /* 横向条高度为 0，相当于隐藏 */
 }
 
-.tableContainer :global(.ant-table-body)::-webkit-scrollbar:horizontal {
-  display: none !important;
+.listFrame :global(.ant-table-body)::-webkit-scrollbar:horizontal {
   height: 0 !important;
 }
 
-/* 固定滚动条容器 - 显示在表格底部 */
-.fixedScrollbarContainer {
-  position: relative;
-  z-index: 10;
-  height: 6px;
-  width: 100%;
+.listFrame :global(.ant-table-body)::-webkit-scrollbar:vertical {
+  width: 5px;
+}
+
+.listFrame :global(.ant-table-body)::-webkit-scrollbar-corner {
   background: transparent;
-  border-radius: 999px;
-  margin-top: 6px;
-  overflow: hidden;
-  flex-shrink: 0;
-  cursor: pointer;
 }
 
-/* 固定滚动条滑块 - 通过 JavaScript 动态更新位置和宽度 */
-.fixedScrollbarThumb {
-  height: 4px;
-  background: #c6c6c6;
-  border-radius: 999px;
-  position: absolute;
-  left: 0;
-  top: 1px;
-  cursor: pointer;
-  min-width: 20px;
-  transition: background 0.2s, opacity 0.2s;
-  opacity: 0.9;
-}
-
-.fixedScrollbarThumb:hover {
-  background: #9e9e9e;
-  opacity: 1;
+/* 给表体底部留出空间，避免原生横向滚动条遮住最后一行数据 */
+.listFrame :global(.ant-table-body) {
+  padding-bottom: 20px;
+  box-sizing: border-box;
 }
 
 /* 表格头部 - 对应 tg-pane-header */

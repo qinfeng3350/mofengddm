@@ -6,12 +6,14 @@ import { FormDataEntity } from '../../database/entities/form-data.entity';
 import { FormDefinitionEntity } from '../../database/entities/form-definition.entity';
 import { BusinessRuleModule } from '../business-rule/business-rule.module';
 import { OperationLogModule } from '../operation-log/operation-log.module';
+import { TenantMetricsModule } from '../tenant-metrics/tenant-metrics.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([FormDataEntity, FormDefinitionEntity]),
     forwardRef(() => BusinessRuleModule),
     OperationLogModule,
+    TenantMetricsModule,
   ],
   controllers: [FormDataController],
   providers: [FormDataService],

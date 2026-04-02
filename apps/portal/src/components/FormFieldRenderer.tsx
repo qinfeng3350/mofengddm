@@ -9,7 +9,7 @@ import {
   Radio,
   Checkbox,
   Form,
-  Upload,
+  Image,
   Table,
   Button,
   Space,
@@ -43,6 +43,8 @@ import { RelatedFormSelector } from "./RelatedFormSelector";
 import { useQuery } from "@tanstack/react-query";
 import { formDefinitionApi } from "@/api/formDefinition";
 import { formDataApi, type FormDataResponse } from "@/api/formData";
+import { extractAttachmentPreviewUrls } from "@/utils/attachmentDisplay";
+import { AttachmentUpload } from "./AttachmentUpload";
 
 interface FormFieldRendererProps {
   field: FormFieldSchema;
@@ -453,7 +455,10 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
           />
         );
 
-      case "attachment":
+      case "attachment": {
+        const multi = field.advanced?.multiple === true;
+        const pictureMode =
+          field.label?.includes("图") || field.advanced?.listType === "picture";
         return (
           <Controller
             name={field.fieldId}
@@ -461,24 +466,60 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
             rules={{
               required: field.required ? `${field.label}是必填项` : false,
             }}
-            render={({ field: formField, fieldState }) => (
-              <Form.Item
-                label={field.label}
-                required={field.required}
-                validateStatus={fieldState.error ? "error" : ""}
-                help={fieldState.error?.message}
-              >
-                <Upload
-                  {...formField}
-                  disabled={isDisabled}
-                  beforeUpload={() => false}
+            render={({ field: formField, fieldState }) => {
+              const readonlyUrls = extractAttachmentPreviewUrls(formField.value);
+              if (isDisabled) {
+                return (
+                  <Form.Item
+                    label={field.label}
+                    required={field.required}
+                    validateStatus={fieldState.error ? "error" : ""}
+                    help={fieldState.error?.message}
+                  >
+                    {readonlyUrls.length === 0 ? (
+                      <Typography.Text type="secondary">暂无文件</Typography.Text>
+                    ) : (
+                      <Image.PreviewGroup>
+                        <Space wrap size="middle">
+                          {readonlyUrls.map((url, i) => (
+                            <Image
+                              key={`${url}-${i}`}
+                              src={url}
+                              alt=""
+                              width={pictureMode ? 120 : 96}
+                              height={pictureMode ? 120 : undefined}
+                              style={
+                                pictureMode
+                                  ? { objectFit: "cover", borderRadius: 8 }
+                                  : { maxHeight: 120, borderRadius: 4 }
+                              }
+                            />
+                          ))}
+                        </Space>
+                      </Image.PreviewGroup>
+                    )}
+                  </Form.Item>
+                );
+              }
+              return (
+                <Form.Item
+                  label={field.label}
+                  required={field.required}
+                  validateStatus={fieldState.error ? "error" : ""}
+                  help={fieldState.error?.message || "文件将上传到服务端保存"}
                 >
-                  <Button icon={<UploadOutlined />}>选择文件</Button>
-                </Upload>
-              </Form.Item>
-            )}
+                  <AttachmentUpload
+                    value={formField.value}
+                    onChange={formField.onChange}
+                    multiple={multi}
+                    pictureMode={pictureMode}
+                  />
+                </Form.Item>
+              );
+            }}
           />
         );
+      }
 
       case "user":
         return (
@@ -998,6 +1039,46 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                               formField.onChange(newData);
                             }}
                           />
+                        );
+                      }
+                      case "attachment": {
+                        const subMulti = subField.advanced?.multiple === true;
+                        const subPicture =
+                          subField.label?.includes("图") ||
+                          subField.advanced?.listType === "picture";
+                        if (isDisabled) {
+                          const urls = extractAttachmentPreviewUrls(text);
+                          return !urls.length ? (
+                            <Typography.Text type="secondary">-</Typography.Text>
+                          ) : (
+                            <Image.PreviewGroup>
+                              <Space wrap size={4}>
+                                {urls.map((url, i) => (
+                                  <Image
+                                    key={`${url}-${i}`}
+                                    src={url}
+                                    alt=""
+                                    width={subPicture ? 48 : 40}
+                                    height={subPicture ? 48 : undefined}
+                                    style={{ objectFit: "cover", borderRadius: 4 }}
+                                  />
+                                ))}
+                              </Space>
+                            </Image.PreviewGroup>
+                          );
+                        }
+                        return (
+                          <div className="subtable-upload-inline">
+                            <AttachmentUpload
+                              value={text}
+                              onChange={(v) =>
+                                handleCellChange(v, index, subField.fieldId)
+                              }
+                              multiple={subMulti}
+                              pictureMode={subPicture}
+                              size="small"
+                            />
+                          </div>
                         );
                       }
                       default:

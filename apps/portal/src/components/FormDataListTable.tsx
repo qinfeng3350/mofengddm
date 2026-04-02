@@ -19,6 +19,7 @@ import { formDataApi } from "@/api/formData";
 import { formDefinitionApi } from "@/api/formDefinition";
 import { apiClient } from "@/api/client";
 import { departmentApi } from "@/api/department";
+import { extractAttachmentPreviewUrls } from "@/utils/attachmentDisplay";
 
 interface FormDataListTableProps {
   formId: string;
@@ -241,6 +242,11 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
       return String(val);
     }
 
+    if (type === "attachment") {
+      const urls = extractAttachmentPreviewUrls(val);
+      return urls.length ? `附件×${urls.length}` : "-";
+    }
+
     if (val === null || val === undefined || val === "") return "-";
     return String(val);
   };
@@ -297,7 +303,36 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
               return (
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {rows.map((row, idx) => (
-                    <div key={idx}>{formatValue(row[subId], sub.type)}</div>
+                    <div key={idx}>
+                      {sub.type === "attachment" ? (
+                        (() => {
+                          const urls = extractAttachmentPreviewUrls(row[subId]);
+                          if (!urls.length) return "-";
+                          return (
+                            <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+                              {urls.slice(0, 2).map((url, i) => (
+                                <img
+                                  key={`${url}-${i}`}
+                                  src={url}
+                                  alt=""
+                                  style={{
+                                    maxHeight: 32,
+                                    maxWidth: 48,
+                                    objectFit: "cover",
+                                    borderRadius: 2,
+                                  }}
+                                />
+                              ))}
+                              {urls.length > 2 ? (
+                                <span style={{ color: "#888", fontSize: 12 }}>+{urls.length - 2}</span>
+                              ) : null}
+                            </span>
+                          );
+                        })()
+                      ) : (
+                        formatValue(row[subId], sub.type)
+                      )}
+                    </div>
                   ))}
                 </div>
               );
@@ -339,7 +374,41 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
           dataIndex: ["data", fieldId],
           key: fieldId,
           width: 150,
-          render: (_v, record: any) => formatValue(record.data?.[fieldId], displayType),
+          render: (_v, record: any) => {
+            const raw = record.data?.[fieldId];
+            if (field.type === "attachment") {
+              const urls = extractAttachmentPreviewUrls(raw);
+              if (!urls.length) return "-";
+              return (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    gap: 4,
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  {urls.slice(0, 3).map((url, i) => (
+                    <img
+                      key={`${url}-${i}`}
+                      src={url}
+                      alt=""
+                      style={{
+                        maxHeight: 44,
+                        maxWidth: 72,
+                        objectFit: "cover",
+                        borderRadius: 4,
+                      }}
+                    />
+                  ))}
+                  {urls.length > 3 ? (
+                    <span style={{ color: "#888", fontSize: 12 }}>+{urls.length - 3}</span>
+                  ) : null}
+                </span>
+              );
+            }
+            return formatValue(raw, displayType);
+          },
         });
       }
     });

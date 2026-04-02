@@ -1,7 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { WorkflowInstanceEntity, FormDefinitionEntity, TenantEntity, UserEntity } from '../../database/entities';
+import {
+  WorkflowInstanceEntity,
+  FormDefinitionEntity,
+  FormDataEntity,
+  TenantEntity,
+  UserEntity,
+} from '../../database/entities';
 import { BusinessRuleExecutorService } from '../business-rule/business-rule.executor';
 import { DingtalkService } from '../dingtalk/dingtalk.service';
 
@@ -27,6 +34,8 @@ export class WorkflowService {
     private readonly instanceRepo: Repository<WorkflowInstanceEntity>,
     @InjectRepository(FormDefinitionEntity)
     private readonly formRepo: Repository<FormDefinitionEntity>,
+    @InjectRepository(FormDataEntity)
+    private readonly formDataRepo: Repository<FormDataEntity>,
     @InjectRepository(TenantEntity)
     private readonly tenantRepository: Repository<TenantEntity>,
     @InjectRepository(UserEntity)
@@ -34,6 +43,7 @@ export class WorkflowService {
     @Inject(forwardRef(() => BusinessRuleExecutorService))
     private readonly ruleExecutor: BusinessRuleExecutorService,
     private readonly dingtalkService: DingtalkService,
+    private readonly configService: ConfigService,
   ) {}
 
   private async pushDingtalkTodoIfNeeded(params: {
@@ -176,18 +186,19 @@ export class WorkflowService {
         sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
       });
 
-      // 部署后 DingTalk 必须能通过公网域名访问 detailUrl
-      // 所以生产环境不要默认使用 localhost。
+      // 部署后 DingTalk 必须能通过公网域名访问 detailUrl（生产勿用 localhost）
       const portalBaseUrl =
+        (this.configService.get<string>('portal.baseUrl') || '').trim() ||
         process.env.PORTAL_BASE_URL ||
         process.env.PORTAL_PUBLIC_BASE_URL ||
         process.env.PUBLIC_PORTAL_URL;
 
       if (!portalBaseUrl) {
-        throw new Error(
-          'Missing PORTAL_BASE_URL (or PORTAL_PUBLIC_BASE_URL / PUBLIC_PORTAL_URL) for DingTalk todo detailUrl. ' +
-            'Please set it to your portal domain, e.g. https://ddm.xxx.com',
+        console.warn(
+          '[WorkflowService] 跳过钉钉待办：未配置 PORTAL_BASE_URL（待办详情链接无法生成）。' +
+            '请在 services/core/.env 中设置 PORTAL_BASE_URL 为公网可访问的前端地址，例如 https://ddm.xxx.com',
         );
+        return null;
       }
 
       // DingTalk 待办链接必须指向“前端真实存在的记录列表入口”
@@ -418,10 +429,92 @@ export class WorkflowService {
       userName: payload.userName,
     });
 
-    if (payload.action === 'reject' || payload.action === 'return') {
-      inst.status = payload.action === 'reject' ? 'rejected' : 'running';
+    if (payload.action === 'reject') {
+      inst.status = 'rejected';
       inst.currentNodeId = undefined;
       return this.instanceRepo.save(inst);
+    }
+
+    /** 退回：回到上一节点，并为上一节点生成待办（发起节点指派给发起人，可改单后再次「同意」提交） */
+    if (payload.action === 'return') {
+      const incomingEdge = edges.find(
+        e =>
+          e.target === currentNode.nodeId ||
+          (e as WorkflowEdge & { targetId?: string }).targetId === currentNode.nodeId,
+      );
+      if (!incomingEdge) {
+        throw new BadRequestException('无法退回：已是第一个节点或未找到上一节点连线');
+      }
+      const prevNodeId =
+        incomingEdge.source ||
+        (incomingEdge as WorkflowEdge & { sourceId?: string }).sourceId;
+      const prevNode = nodes.find(
+        n => n.nodeId === prevNodeId || (n as WorkflowNode & { id?: string }).id === prevNodeId,
+      );
+      if (!prevNode) {
+        throw new BadRequestException('无法退回：上一节点不存在');
+      }
+
+      inst.status = 'running';
+      inst.currentNodeId = prevNode.nodeId;
+
+      const startHist = (inst.history || []).find((h: any) => h.type === 'start');
+      let initiatorId: string | undefined = startHist?.userId ? String(startHist.userId) : undefined;
+      if (!initiatorId && inst.recordId) {
+        const fd = await this.formDataRepo.findOne({ where: { recordId: inst.recordId } });
+        if (fd?.submitterId) initiatorId = String(fd.submitterId);
+      }
+
+      let assignees: { type?: string; values?: string[] } = {
+        ...(prevNode.assignees || {}),
+        values: [...(prevNode.assignees?.values || []).map(String)],
+      };
+      if (prevNode.type === 'start') {
+        if (!initiatorId) {
+          throw new BadRequestException('无法退回至发起节点：缺少发起人信息');
+        }
+        assignees = { values: [initiatorId] };
+      }
+
+      const newTaskId = `tk_${Date.now()}`;
+      (inst.tasks as any[]).push({
+        taskId: newTaskId,
+        nodeId: prevNode.nodeId,
+        nodeType: prevNode.type,
+        label: prevNode.label,
+        assignees,
+        status: 'pending',
+        createdAt: now,
+      });
+
+      let saved = await this.instanceRepo.save(inst);
+
+      const createdTask = (inst.tasks as any[]).find((t: any) => t.taskId === newTaskId);
+      const assigneeIds: string[] = Array.isArray(assignees.values) ? assignees.values.map(String) : [];
+      if (
+        createdTask?.taskId &&
+        assigneeIds.length &&
+        (prevNode.type === 'approval' || prevNode.type === 'task' || prevNode.type === 'start')
+      ) {
+        const dt = await this.pushDingtalkTodoIfNeeded({
+          tenantId,
+          taskId: String(createdTask.taskId),
+          nodeLabel: prevNode.label || '待处理',
+          recordId: String(inst.recordId),
+          assigneeUserIds: assigneeIds,
+          creatorUserId: payload.userId ? String(payload.userId) : undefined,
+        });
+        if (dt?.todoTaskId) {
+          (createdTask as any).dingtalkTodo = {
+            taskId: dt.todoTaskId,
+            creatorUnionId: dt.creatorUnionId,
+            executorUnionIds: dt.executorUnionIds,
+          };
+          saved = await this.instanceRepo.save(inst);
+        }
+      }
+
+      return saved;
     }
 
     // 当前节点“同意”后：如存在钉钉待办，更新执行者状态为完成（使钉钉待办自动移除/完成）

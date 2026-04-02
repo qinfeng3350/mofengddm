@@ -28,6 +28,8 @@
     "dayjs": "^1.11.19",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.5",
+    "jquery": "^4.0.0",
+    "luckysheet": "^2.1.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-hook-form": "^7.66.1",

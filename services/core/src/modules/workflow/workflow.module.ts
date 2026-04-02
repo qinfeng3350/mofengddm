@@ -1,6 +1,12 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { WorkflowInstanceEntity, FormDefinitionEntity, TenantEntity, UserEntity } from '../../database/entities';
+import {
+  WorkflowInstanceEntity,
+  FormDefinitionEntity,
+  FormDataEntity,
+  TenantEntity,
+  UserEntity,
+} from '../../database/entities';
 import { WorkflowService } from './workflow.service';
 import { WorkflowController } from './workflow.controller';
 import { BusinessRuleModule } from '../business-rule/business-rule.module';
@@ -11,6 +17,7 @@ import { DingtalkModule } from '../dingtalk/dingtalk.module';
     TypeOrmModule.forFeature([
       WorkflowInstanceEntity,
       FormDefinitionEntity,
+      FormDataEntity,
       TenantEntity,
       UserEntity,
     ]),

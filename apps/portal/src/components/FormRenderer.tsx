@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
 import { formDefinitionApi } from "@/api/formDefinition";
 import { formDataApi } from "@/api/formData";
+import { workflowApi } from "@/api/workflow";
 import { useAuthStore } from "@/store/useAuthStore";
 import { FormFieldRenderer } from "./FormFieldRenderer";
 import { RuntimeContainerRenderer } from "./RuntimeContainerRenderer";
@@ -146,6 +147,30 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     queryKey: ["formDefinition", formId],
     queryFn: () => formDefinitionApi.getById(formId),
   });
+
+  /** 与 formDefinitionApi.getById 对齐：metadata 可能在 config.metadata */
+  const formMetadata = useMemo(() => {
+    if (!formDefinition) return {} as Record<string, unknown>;
+    return (
+      (formDefinition as { metadata?: Record<string, unknown> }).metadata ??
+      (formDefinition as { config?: { metadata?: Record<string, unknown> } }).config?.metadata ??
+      {}
+    );
+  }, [formDefinition]);
+
+  /** 是否应在提交时尝试发起流程（与 onSubmit 逻辑一致） */
+  const hasWorkflowRuntime = useMemo(() => {
+    const workflowEnabled = formMetadata?.workflowEnabled !== false;
+    const wf = formMetadata?.workflow as { nodes?: unknown[] } | undefined;
+    const nodes = wf?.nodes;
+    return (
+      workflowEnabled &&
+      wf != null &&
+      typeof wf === "object" &&
+      Array.isArray(nodes) &&
+      nodes.length > 0
+    );
+  }, [formMetadata]);
 
   // 获取已有数据（编辑或查看模式）
   const { data: existingData } = useQuery({
@@ -314,14 +339,8 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
 
   const onSubmit = async (data: Record<string, unknown>, status: string = "submitted") => {
     try {
-      // 检查是否有流程配置且已启用，如果有则在提交时启动流程
-      const workflowEnabled = formDefinition?.metadata?.workflowEnabled !== false;
-      const hasWorkflow = workflowEnabled &&
-                         formDefinition?.metadata?.workflow && 
-                         typeof formDefinition.metadata.workflow === 'object' &&
-                         (formDefinition.metadata.workflow as any).nodes &&
-                         Array.isArray((formDefinition.metadata.workflow as any).nodes) &&
-                         (formDefinition.metadata.workflow as any).nodes.length > 0;
+      const hasWorkflow = hasWorkflowRuntime;
+      const wf: any = formMetadata?.workflow;
 
       const response = await formDataApi.submit({
         formId,
@@ -330,20 +349,47 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
         recordId: recordId || undefined, // 编辑模式下传递recordId
       });
 
-      // 如果是正式提交（非草稿）且有流程配置，尝试启动流程
-      if (status === "submitted" && hasWorkflow && response?.recordId) {
+      // 兼容多种返回结构；编辑场景下 props.recordId 必须作为回退，否则无法发起流程
+      const rid =
+        (response as { recordId?: string })?.recordId ??
+        (response as { record_id?: string })?.record_id ??
+        (response as { data?: { recordId?: string } })?.data?.recordId ??
+        recordId;
+
+      let workflowStarted = false;
+
+      // 正式提交且配置了流程：无实例则发起，已有实例则不重复（编辑暂存后再提交常见）
+      if (status === "submitted" && hasWorkflow && wf && rid) {
         try {
-          const wf: any = (formDefinition.metadata!.workflow as any);
-          const startResp = await (await import("@/api/workflow")).workflowApi.startInstance({
-            formId,
-            recordId: response.recordId,
-            workflow: wf,
-            userId: user?.id,
-            userName: user?.name || user?.account,
-          });
-          console.log("流程已启动", startResp);
-        } catch (workflowError) {
-          console.error("启动流程失败:", workflowError);
+          await workflowApi.getInstanceByRecord(rid);
+          message.info("当前记录已存在流程实例，未重复发起");
+        } catch (e: unknown) {
+          const st = (e as { response?: { status?: number } })?.response?.status;
+          if (st === 404) {
+            try {
+              await workflowApi.startInstance({
+                formId,
+                recordId: rid,
+                workflow: wf,
+                userId: user?.id,
+                userName: user?.name || user?.account,
+              });
+              workflowStarted = true;
+            } catch (startErr: unknown) {
+              console.error("启动流程失败:", startErr);
+              const msg = (() => {
+                const d = (startErr as { response?: { data?: { message?: unknown } } })?.response?.data;
+                const m = d?.message;
+                if (Array.isArray(m)) return m.join("; ");
+                if (typeof m === "string" && m.trim()) return m;
+                return startErr instanceof Error ? startErr.message : "";
+              })();
+              message.error(msg || "启动流程失败，请稍后重试或联系管理员");
+            }
+          } else {
+            console.error("查询流程实例失败:", e);
+            message.warning("无法确认流程状态，请保存后刷新详情页查看流程");
+          }
         }
       }
 
@@ -359,11 +405,13 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
         // 不重置表单，不调用 onSubmitSuccess
       } else {
         // 提交：最终提交，关闭表单
-        message.success("提交成功" + (hasWorkflow ? "（已启动流程）" : ""));
+        message.success(
+          workflowStarted ? "提交成功（已发起流程）" : "提交成功",
+        );
         // 重置表单
         reset(defaultValues);
-        // 调用成功回调，关闭抽屉
-        onSubmitSuccess?.(response.data);
+        // 回调传入整条表单数据记录（勿用 response.data，会与表单字段 data 混淆）
+        onSubmitSuccess?.(response as Record<string, unknown>);
       }
     } catch (error: unknown) {
       console.error("操作失败:", error);
@@ -401,12 +449,7 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
   }, [allUsers]);
 
   const showPreviewThenSubmit = async (data: Record<string, unknown>) => {
-    const hasWorkflow = formDefinition?.metadata?.workflow &&
-      typeof formDefinition.metadata.workflow === 'object' &&
-      (formDefinition.metadata.workflow as any).nodes &&
-      Array.isArray((formDefinition.metadata.workflow as any).nodes) &&
-      (formDefinition.metadata.workflow as any).nodes.length > 0;
-    if (hasWorkflow) {
+    if (hasWorkflowRuntime) {
       setPendingSubmitData(data);
       setPreviewOpen(true);
       return;
@@ -529,7 +572,7 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
         cancelText="取消"
       >
         {(() => {
-          const wf: any = formDefinition?.metadata?.workflow;
+          const wf: any = formMetadata?.workflow;
           const nodes = (wf?.nodes || []) as any[];
           const edges = (wf?.edges || []) as any[];
           if (!nodes.length) return <div>未配置流程</div>;

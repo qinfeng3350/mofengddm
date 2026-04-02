@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, Descriptions, Timeline, Tag, Space, Input, Button, message, Popconfirm, Steps } from "antd";
+import { Card, Descriptions, Timeline, Tag, Space, Input, Button, message, Popconfirm, Steps, Typography } from "antd";
 import dayjs from "dayjs";
 import { workflowApi } from "@/api/workflow";
 import { formDataApi } from "@/api/formData";
@@ -166,6 +166,13 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
     return startHistory?.userId === user.id || formData?.submitterId === user.id;
   }, [instance, user, formData, startHistory]);
 
+  /** 退回发起节点后，待办在「发起」节点，发起人改单后用「提交」推进流程 */
+  const pendingAtStartNode = useMemo(() => {
+    if (!instance || !pendingTask) return false;
+    const n = findNode(instance.definition, pendingTask.nodeId);
+    return n?.type === "start";
+  }, [instance, pendingTask]);
+
   const remindMutation = useMutation({
     mutationFn: async () => {
       if (!instance || !pendingTask) return;
@@ -300,17 +307,24 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
 
           {pendingTask && canHandle && (
             <Space direction="vertical" style={{ width: "100%" }}>
+              {pendingAtStartNode && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  当前为退回后的发起节点：请先到表单中修改数据并保存，再点击下方「提交」进入下一审批节点。
+                </Typography.Text>
+              )}
               <Input.TextArea
-                placeholder="请输入审批意见"
+                placeholder={pendingAtStartNode ? "选填：备注说明" : "请输入审批意见"}
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 maxLength={500}
                 rows={4}
               />
               <Space>
-                <Button type="primary" icon={<CheckOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "approve" })}>同意</Button>
+                <Button type="primary" icon={<CheckOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "approve" })}>{pendingAtStartNode ? "提交" : "同意"}</Button>
                 <Button danger icon={<CloseOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "reject" })}>拒绝</Button>
-                <Button icon={<RollbackOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "return" })}>退回</Button>
+                {!pendingAtStartNode && (
+                  <Button icon={<RollbackOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "return" })}>退回</Button>
+                )}
               </Space>
             </Space>
           )}

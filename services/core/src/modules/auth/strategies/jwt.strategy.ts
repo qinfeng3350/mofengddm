@@ -3,13 +3,14 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
-// JwtStrategy doesn't directly use UserEntity, it's only used in AuthService
+import { TenantLimitsService } from '../../tenant-metrics/tenant-limits.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private configService: ConfigService,
     private authService: AuthService,
+    private readonly tenantLimitsService: TenantLimitsService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -24,6 +25,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user) {
       throw new UnauthorizedException();
     }
+
+    await this.tenantLimitsService.getTenantOrThrow(user.tenantId);
 
     return {
       id: user.id,

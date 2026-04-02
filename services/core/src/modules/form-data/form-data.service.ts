@@ -6,6 +6,7 @@ import { FormDefinitionEntity } from '../../database/entities/form-definition.en
 import { SubmitFormDataDto } from './dto/submit-form-data.dto';
 import { BusinessRuleExecutorService } from '../business-rule/business-rule.executor';
 import { OperationLogService } from '../operation-log/operation-log.service';
+import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
 
 @Injectable()
 export class FormDataService {
@@ -17,6 +18,7 @@ export class FormDataService {
     @Inject(forwardRef(() => BusinessRuleExecutorService))
     private ruleExecutor: BusinessRuleExecutorService,
     private operationLogService: OperationLogService,
+    private readonly tenantLimitsService: TenantLimitsService,
   ) {}
 
   async submit(
@@ -39,6 +41,8 @@ export class FormDataService {
     if (submitDto.recordId) {
       return this.update(submitDto.recordId, submitDto, userId, userName);
     }
+
+    await this.tenantLimitsService.assertCanCreateRecord(tenantId);
 
     // 创建表单数据记录
     // TypeORM的json类型会自动序列化，直接传入对象即可

@@ -10,19 +10,16 @@ import {
   Input,
   Select,
   Modal,
-  Form,
   message,
-  Popconfirm,
   Descriptions,
 } from "antd";
 import {
   UserOutlined,
   EditOutlined,
-  DeleteOutlined,
   SearchOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
 import { departmentApi } from "@/api/department";
 import "./SettingsPage.css";
@@ -45,24 +42,44 @@ interface User {
     name: string;
   };
   tenantId: string;
+  status: number;
 }
 
 export const UserManagementPage = () => {
+  const queryClient = useQueryClient();
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
 
-  // 获取用户列表
+  // 获取用户列表（含停用用户，便于配额管理）
   const {
     data: users = [],
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ["users", searchKeyword],
+    queryKey: ["users", searchKeyword, "adminAll"],
     queryFn: async () => {
-      const params = searchKeyword ? { keyword: searchKeyword } : {};
+      const params: Record<string, string> = { includeDisabled: "true" };
+      if (searchKeyword) params.keyword = searchKeyword;
       const res = await apiClient.get<User[]>("/users", { params });
       return Array.isArray(res) ? res : [];
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: number }) => {
+      return apiClient.patch<User>(`/users/${id}/status`, { status });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      message.success("已更新用户状态");
+    },
+    onError: (err: any) => {
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        "更新失败（若已达启用人数上限，请先停用其他用户）";
+      message.error(msg);
     },
   });
 
@@ -158,6 +175,26 @@ export const UserManagementPage = () => {
         ),
     },
     {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      width: 110,
+      render: (status: number, record: User) => (
+        <Select
+          size="small"
+          style={{ width: 96 }}
+          value={status === 1 ? 1 : 0}
+          loading={statusMutation.isPending && statusMutation.variables?.id === record.id}
+          disabled={statusMutation.isPending}
+          onChange={(v) => statusMutation.mutate({ id: record.id, status: v })}
+          options={[
+            { value: 1, label: "启用" },
+            { value: 0, label: "停用" },
+          ]}
+        />
+      ),
+    },
+    {
       title: "操作",
       key: "action",
       width: 150,
@@ -210,8 +247,13 @@ export const UserManagementPage = () => {
               <Descriptions.Item label="当前用户">
                 {currentUser.name || currentUser.account}
               </Descriptions.Item>
-              <Descriptions.Item label="总用户数">
-                <Tag color="green">{users.length} 人</Tag>
+              <Descriptions.Item label="用户数">
+                <Space size={8}>
+                  <Tag color="green">
+                    启用 {users.filter((u) => u.status === 1).length} 人
+                  </Tag>
+                  <Tag>总计 {users.length} 人</Tag>
+                </Space>
               </Descriptions.Item>
             </Descriptions>
           </Card>
@@ -279,6 +321,13 @@ export const UserManagementPage = () => {
             </Descriptions.Item>
             <Descriptions.Item label="租户ID">
               <Tag>{selectedUser.tenantId}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="状态">
+              {selectedUser.status === 1 ? (
+                <Tag color="success">启用</Tag>
+              ) : (
+                <Tag>停用</Tag>
+              )}
             </Descriptions.Item>
           </Descriptions>
         )}

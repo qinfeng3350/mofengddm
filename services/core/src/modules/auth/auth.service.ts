@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { UserEntity, TenantEntity } from '../../database/entities';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
 
 @Injectable()
 export class AuthService {
@@ -20,6 +21,7 @@ export class AuthService {
     @InjectRepository(TenantEntity)
     private tenantRepository: Repository<TenantEntity>,
     private jwtService: JwtService,
+    private readonly tenantLimitsService: TenantLimitsService,
   ) {}
 
   private buildUserDto(user: UserEntity, tenant: TenantEntity) {
@@ -47,6 +49,15 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto) {
+    // 注册需要邀请码：避免公开注册被滥用
+    const expectedInvite = process.env.REGISTER_INVITE_CODE || "";
+    if (!expectedInvite) {
+      throw new BadRequestException("注册功能未开启：请先在服务端配置 REGISTER_INVITE_CODE");
+    }
+    if (!registerDto.inviteCode || registerDto.inviteCode !== expectedInvite) {
+      throw new BadRequestException("邀请码错误");
+    }
+
     // 检查账号是否已存在
     const existingUser = await this.userRepository.findOne({
       where: { account: registerDto.account },
@@ -75,6 +86,8 @@ export class AuthService {
     if (!defaultTenant) {
       throw new Error('默认租户不存在，请先初始化数据库');
     }
+
+    await this.tenantLimitsService.getTenantOrThrow(defaultTenant.id, defaultTenant);
 
     // 加密密码
     const saltRounds = 10;
@@ -152,6 +165,8 @@ export class AuthService {
       console.log('[AuthService] 用户状态被禁用:', user.status);
       throw new UnauthorizedException('账号已被禁用');
     }
+
+    await this.tenantLimitsService.getTenantOrThrow(user.tenantId);
 
     // 生成JWT token
     const payload = {
@@ -271,6 +286,8 @@ export class AuthService {
       throw new BadRequestException('目标租户不存在');
     }
 
+    await this.tenantLimitsService.getTenantOrThrow(tenant.id, tenant as any);
+
     const payload = this.buildTokenPayload(targetUser);
     const token = this.jwtService.sign(payload);
     return {
@@ -320,6 +337,8 @@ export class AuthService {
     if (!tenant) {
       throw new BadRequestException('目标租户不存在');
     }
+
+    await this.tenantLimitsService.getTenantOrThrow(tenant.id, tenant as any);
 
     const payload = this.buildTokenPayload(targetUser);
     return {

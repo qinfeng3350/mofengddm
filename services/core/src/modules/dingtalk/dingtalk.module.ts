@@ -10,11 +10,13 @@ import { DingtalkLoginController } from './dingtalk-login.controller';
 import { DingtalkLoginService } from './dingtalk-login.service';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TenantMetricsModule } from '../tenant-metrics/tenant-metrics.module';
 
 @Module({
   imports: [
     HttpModule,
     TypeOrmModule.forFeature([UserEntity, DepartmentEntity, TenantEntity]),
+    TenantMetricsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

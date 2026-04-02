@@ -5,6 +5,7 @@ import * as bcrypt from 'bcrypt';
 import { DingtalkService } from './dingtalk.service';
 import { UserEntity, DepartmentEntity, TenantEntity } from '../../database/entities';
 import type { DingtalkDepartment, DingtalkUser } from './types/dingtalk.types';
+import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
 
 @Injectable()
 export class DingtalkSyncService {
@@ -17,6 +18,7 @@ export class DingtalkSyncService {
     @InjectRepository(TenantEntity)
     private readonly tenantRepository: Repository<TenantEntity>,
     private readonly dataSource: DataSource,
+    private readonly tenantLimitsService: TenantLimitsService,
   ) {}
 
   /**
@@ -284,6 +286,7 @@ export class DingtalkSyncService {
               const tail = String(unionId).slice(-4);
               console.log('[DingtalkSync] 检测到 unionId', { userid: dtUser.userid, unionIdHead: head, unionIdTail: tail });
             }
+            await this.tenantLimitsService.assertCanEnableUser(tenant.id, 0);
             const newUser = this.userRepository.create({
               account: `dingtalk_${dtUser.userid}`,
               name: dtUser.name || `钉钉用户_${dtUser.userid}`,

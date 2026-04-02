@@ -6,6 +6,7 @@ import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { TenantEntity, UserEntity } from '../../database/entities';
 import { DingtalkService } from './dingtalk.service';
+import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
 
 type DingConfig = {
   appKey: string;
@@ -22,6 +23,7 @@ export class DingtalkLoginService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly dingtalkService: DingtalkService,
+    private readonly tenantLimitsService: TenantLimitsService,
   ) {}
 
   private parseMetadata(value: unknown): Record<string, unknown> {
@@ -135,6 +137,7 @@ export class DingtalkLoginService {
       throw new BadRequestException('缺少 code/authCode');
     }
     const tenant = await this.resolveTenant(options);
+    await this.tenantLimitsService.getTenantOrThrow(tenant.id, tenant);
     const { appKey, appSecret } = this.resolveDingConfig(tenant);
 
     const tokenResp = await this.dingtalkService.exchangeOAuthUserAccessToken({

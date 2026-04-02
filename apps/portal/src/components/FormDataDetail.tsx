@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Card, Descriptions, Spin, Button, Tag, Space, Table, Timeline, message, Input } from "antd";
+import { Card, Descriptions, Spin, Button, Tag, Space, Table, Timeline, message, Input, Image } from "antd";
 import { ArrowLeftOutlined, CheckOutlined, CloseOutlined, RollbackOutlined } from "@ant-design/icons";
 import { formDataApi } from "@/api/formData";
 import { formDefinitionApi } from "@/api/formDefinition";
@@ -8,6 +8,7 @@ import { workflowApi } from "@/api/workflow";
 import dayjs from "dayjs";
 import { useAuthStore } from "@/store/useAuthStore";
 import { apiClient } from "@/api/client";
+import { extractAttachmentPreviewUrls } from "@/utils/attachmentDisplay";
 
 interface FormDataDetailProps {
   recordId: string;
@@ -128,7 +129,20 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
             title: subField.label,
             dataIndex: subField.fieldId,
             key: subField.fieldId,
-            render: (text: any) => text || '-',
+            render: (text: any) => {
+              if (subField.type === "attachment") {
+                const urls = extractAttachmentPreviewUrls(text);
+                if (!urls.length) return "-";
+                return (
+                  <Space wrap size={4}>
+                    {urls.map((url, i) => (
+                      <Image key={`${url}-${i}`} src={url} alt="" width={48} height={48} style={{ objectFit: "cover" }} />
+                    ))}
+                  </Space>
+                );
+              }
+              return text ?? "-";
+            },
           }));
           columns.unshift({
             title: '序号',
@@ -149,6 +163,26 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
       } else {
         displayValue = <span style={{ color: "#999" }}>暂无数据</span>;
       }
+    } else if (field?.type === "attachment") {
+      const urls = extractAttachmentPreviewUrls(value);
+      displayValue =
+        urls.length === 0 ? (
+          <span style={{ color: "#999" }}>暂无文件</span>
+        ) : (
+          <Image.PreviewGroup>
+            <Space wrap>
+              {urls.map((url, i) => (
+                <Image
+                  key={`${url}-${i}`}
+                  src={url}
+                  alt=""
+                  width={96}
+                  style={{ objectFit: "cover", borderRadius: 4 }}
+                />
+              ))}
+            </Space>
+          </Image.PreviewGroup>
+        );
     } else if (Array.isArray(value)) {
       displayValue = value.join(", ");
     } else if (typeof value === "object") {

@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Spin,
@@ -32,14 +33,53 @@ import {
   LockOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
+import { Resizable } from "react-resizable";
+import "react-resizable/css/styles.css";
 
 import styles from "./FormDataList.module.css";
+import { extractAttachmentPreviewUrls } from "@/utils/attachmentDisplay";
 import { formDataApi } from "@/api/formData";
 import { formDefinitionApi } from "@/api/formDefinition";
 import { apiClient } from "@/api/client";
 import { departmentApi } from "@/api/department";
 import { operationLogApi } from "@/api/operationLog";
 import type { OperationLog } from "@/api/operationLog";
+import { WorkflowRowHoverCardContent } from "./WorkflowRowHoverCard";
+
+const COL_MIN = 80;
+const COL_MAX = 800;
+const DEFAULT_W_SERIAL = 70;
+const DEFAULT_W_ACTIONS = 120;
+const DEFAULT_W_FIELD = 160;
+const DEFAULT_W_SUB = 180;
+
+/** 可拖拽调列宽的表头单元格（与 antd Table components.header.cell 配合） */
+const ResizableHeaderCell = React.forwardRef<HTMLTableCellElement, any>((props, ref) => {
+  const { onResize, width, ...restProps } = props;
+  if (width == null || width === undefined) {
+    return <th {...restProps} ref={ref} />;
+  }
+  const w = Number(width);
+  return (
+    <Resizable
+      width={w}
+      height={0}
+      minConstraints={[COL_MIN, 0]}
+      maxConstraints={[COL_MAX, 0]}
+      handle={
+        <span
+          className={`react-resizable-handle ${styles.colResizeHandle}`}
+          onClick={(e) => e.stopPropagation()}
+        />
+      }
+      onResize={onResize}
+      draggableOpts={{ enableUserSelectHack: false }}
+    >
+      <th {...restProps} ref={ref} />
+    </Resizable>
+  );
+});
+ResizableHeaderCell.displayName = "ResizableHeaderCell";
 
 interface FormDataListProps {
   formId: string;
@@ -50,6 +90,8 @@ interface FormDataListProps {
   selectedFilter?: string;
   onFilterChange?: (filter: string) => void;
   onManageFilters?: () => void;
+  /** 应用配置：悬停行时显示流程状态（轻量浮层） */
+  listWorkflowHoverEnabled?: boolean;
 }
 
 export const FormDataList: React.FC<FormDataListProps> = ({
@@ -61,6 +103,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   selectedFilter = "全部",
   onFilterChange,
   onManageFilters,
+  listWorkflowHoverEnabled = false,
 }) => {
   // 表单定义
   const {
@@ -73,6 +116,40 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   });
 
   const formDefinition = propFormDefinition || queryFormDefinition;
+
+  const formWorkflowEnabled = formDefinition?.metadata?.workflowEnabled !== false;
+
+  const [rowHoverTip, setRowHoverTip] = useState<{
+    recordId: string;
+    left: number;
+    top: number;
+  } | null>(null);
+  const rowHoverEnterTimer = useRef<number | null>(null);
+  const rowHoverLeaveTimer = useRef<number | null>(null);
+
+  const clearRowHoverTimers = useCallback(() => {
+    if (rowHoverEnterTimer.current != null) window.clearTimeout(rowHoverEnterTimer.current);
+    if (rowHoverLeaveTimer.current != null) window.clearTimeout(rowHoverLeaveTimer.current);
+    rowHoverEnterTimer.current = null;
+    rowHoverLeaveTimer.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!rowHoverTip) return;
+    const close = () => setRowHoverTip(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [rowHoverTip]);
+
+  useEffect(() => () => clearRowHoverTimers(), [clearRowHoverTimers]);
+
+  useEffect(() => {
+    setRowHoverTip(null);
+  }, [formId]);
 
   // 表单数据
   const {
@@ -103,13 +180,12 @@ export const FormDataList: React.FC<FormDataListProps> = ({
 
   // ====== 通用数据格式化：用户 / 部门 / 地址 / 流水号 ======
   // 用户列表，用于把 ID 映射成姓名
-  const { data: userList = [], isLoading: userListLoading, error: userListError } = useQuery({
+  const { data: userList = [] } = useQuery({
     queryKey: ["users", "forList"],
     queryFn: async () => {
       try {
         const res = await apiClient.get("/users");
         const list = Array.isArray(res) ? res : [];
-        console.log("【调试】用户列表API返回:", list.length, "个用户");
         return list;
       } catch (e) {
         console.error("获取用户列表失败（列表页）:", e);
@@ -120,17 +196,6 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
-
-  // 调试：打印用户列表加载状态
-  useEffect(() => {
-    if (userListLoading) {
-      console.log("【调试】用户列表加载中...");
-    } else if (userListError) {
-      console.error("【调试】用户列表加载失败:", userListError);
-    } else if (userList.length > 0) {
-      console.log("【调试】用户列表加载成功，数量:", userList.length);
-    }
-  }, [userListLoading, userListError, userList.length]);
 
   // 部门列表：从API加载
   const { data: departmentListData, isLoading: departmentListLoading } = useQuery({
@@ -156,13 +221,6 @@ export const FormDataList: React.FC<FormDataListProps> = ({
       if (!u) return;
       map.set(String(u.id), u);
     });
-    // 调试：打印用户列表和映射
-    if (userList.length > 0) {
-      console.log("【调试】用户列表已加载，用户数量:", userList.length);
-      console.log("【调试】用户列表前3个:", userList.slice(0, 3));
-      console.log("【调试】userMap大小:", map.size);
-      console.log("【调试】userMap keys:", Array.from(map.keys()));
-    }
     return map;
   }, [userList]);
 
@@ -404,6 +462,53 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     }
   }, [sortConfig, formId, saveSortConfig]);
 
+  const handleColumnResize = useCallback((colKey: string) => {
+    return (_e: unknown, { size }: { size: { width: number } }) => {
+      setColumnWidths((prev) => ({
+        ...prev,
+        [colKey]: Math.min(COL_MAX, Math.max(COL_MIN, Math.round(size.width))),
+      }));
+    };
+  }, []);
+
+  const loadColumnWidths = useCallback((): Record<string, number> => {
+    if (!formId) return {};
+    try {
+      const raw = localStorage.getItem(`formColumnWidths_${formId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, number>;
+        if (parsed && typeof parsed === "object") return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return {};
+  }, [formId]);
+
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const skipNextColumnWidthSaveRef = useRef(false);
+
+  useEffect(() => {
+    skipNextColumnWidthSaveRef.current = true;
+    setColumnWidths(loadColumnWidths());
+  }, [formId, loadColumnWidths]);
+
+  useEffect(() => {
+    if (!formId) return;
+    if (skipNextColumnWidthSaveRef.current) {
+      skipNextColumnWidthSaveRef.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(`formColumnWidths_${formId}`, JSON.stringify(columnWidths));
+      } catch {
+        /* ignore */
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [columnWidths, formId]);
+
   // 数据源映射
   const rowData = useMemo(() => {
     if (!data || !Array.isArray(data)) return [];
@@ -425,11 +530,11 @@ export const FormDataList: React.FC<FormDataListProps> = ({
 
   // 滚动条同步相关 refs
   const tableBodyRef = useRef<HTMLDivElement>(null);
-  const scrollbarThumbRef = useRef<HTMLDivElement>(null);
-  const scrollbarContainerRef = useRef<HTMLDivElement>(null);
-  const isDraggingRef = useRef(false);
-  const dragStartXRef = useRef(0);
-  const scrollStartLeftRef = useRef(0);
+  const FIXED_SCROLL_OFFSET = 360;
+  const calcFixedScrollY = () =>
+    Math.max(320, (typeof window !== "undefined" ? window.innerHeight : 900) - FIXED_SCROLL_OFFSET);
+  // 固定大小策略：不依赖容器首帧测量，避免刷新后高度随机变化
+  const [tableScrollY, setTableScrollY] = useState<number>(calcFixedScrollY);
 
   useEffect(() => {
     // 数据变化时重置到第一页
@@ -442,113 +547,17 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     return rowData.slice(start, end);
   }, [rowData, currentPage, pageSize]);
 
-  // 同步表格滚动和底部滚动条
   useEffect(() => {
-    // 延迟执行，确保 DOM 已渲染
-    const timer = setTimeout(() => {
-      let tableBody = tableBodyRef.current;
-      const scrollbarThumb = scrollbarThumbRef.current;
-      const scrollbarContainer = scrollbarContainerRef.current;
-
-      if (!tableBody) {
-        // 如果找不到元素，尝试通过选择器查找
-        const tableWrapper = document.querySelector(`.${styles.tableContainer} .ant-table-body`) as HTMLElement;
-        if (tableWrapper) {
-          tableBody = tableWrapper;
-          (tableBodyRef as any).current = tableWrapper;
-        }
-      }
-
-      if (!tableBody || !scrollbarThumb || !scrollbarContainer) return;
-
-      const actualTableBody = tableBody as HTMLElement;
-
-      const updateScrollbar = () => {
-        const scrollWidth = actualTableBody.scrollWidth;
-        const clientWidth = actualTableBody.clientWidth;
-        const scrollLeft = actualTableBody.scrollLeft;
-        const maxScrollLeft = scrollWidth - clientWidth;
-
-        if (maxScrollLeft <= 0) {
-          // 不需要滚动
-          scrollbarThumb.style.display = "none";
-          return;
-        }
-
-        scrollbarThumb.style.display = "block";
-        const thumbWidth = (clientWidth / scrollWidth) * 100;
-        const thumbLeft = (scrollLeft / maxScrollLeft) * (100 - thumbWidth);
-
-        scrollbarThumb.style.width = `${thumbWidth}%`;
-        scrollbarThumb.style.left = `${thumbLeft}%`;
-      };
-
-      // 监听表格滚动
-      actualTableBody.addEventListener("scroll", updateScrollbar);
-      updateScrollbar(); // 初始更新
-
-      // 处理滚动条点击和拖拽
-      const handleMouseDown = (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-        if (!scrollbarContainer.contains(target)) return;
-        isDraggingRef.current = true;
-        dragStartXRef.current = e.clientX;
-        scrollStartLeftRef.current = actualTableBody.scrollLeft;
-        
-        // 如果点击的是滚动条容器而不是滑块，直接跳转到对应位置
-        if (target === scrollbarContainer || !scrollbarThumb.contains(target)) {
-          const rect = scrollbarContainer.getBoundingClientRect();
-          const clickX = e.clientX - rect.left;
-          const scrollbarWidth = scrollbarContainer.clientWidth;
-          const scrollWidth = actualTableBody.scrollWidth;
-          const clientWidth = actualTableBody.clientWidth;
-          const maxScrollLeft = scrollWidth - clientWidth;
-          const scrollRatio = clickX / scrollbarWidth;
-          actualTableBody.scrollLeft = scrollRatio * maxScrollLeft;
-        }
-        
-        e.preventDefault();
-      };
-
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!isDraggingRef.current) return;
-        const deltaX = e.clientX - dragStartXRef.current;
-        const scrollbarWidth = scrollbarContainer.clientWidth;
-        const scrollWidth = actualTableBody.scrollWidth;
-        const clientWidth = actualTableBody.clientWidth;
-        const maxScrollLeft = scrollWidth - clientWidth;
-        const scrollDelta = (deltaX / scrollbarWidth) * scrollWidth;
-        actualTableBody.scrollLeft = Math.max(0, Math.min(maxScrollLeft, scrollStartLeftRef.current + scrollDelta));
-      };
-
-      const handleMouseUp = () => {
-        isDraggingRef.current = false;
-      };
-
-      scrollbarContainer.addEventListener("mousedown", handleMouseDown);
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-
-      // 监听窗口大小变化
-      const handleResize = () => {
-        updateScrollbar();
-      };
-      window.addEventListener("resize", handleResize);
-
-      // 清理函数
-      return () => {
-        actualTableBody.removeEventListener("scroll", updateScrollbar);
-        scrollbarContainer.removeEventListener("mousedown", handleMouseDown);
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-        window.removeEventListener("resize", handleResize);
-      };
-    }, 100);
-
-    return () => {
-      clearTimeout(timer);
+    const onResize = () => {
+      const next = calcFixedScrollY();
+      setTableScrollY((prev) => (Math.abs(prev - next) > 2 ? next : prev));
     };
-  }, [pagedRowData]);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // 不再使用自定义横向滚动条，同步逻辑移除：避免出现双横条/覆盖数据
 
   // 单个关联记录显示组件
   const SingleRelatedRecordDisplay: React.FC<{
@@ -814,14 +823,8 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           if (!v) return "";
           if (typeof v === "string" || typeof v === "number") {
             const id = String(v).trim();
-            console.log(`【调试】extractName 被调用，id: ${id}, userMap.size: ${userMap.size}`);
             const u = userMap.get(id);
-            console.log(`【调试】查找结果:`, u ? `找到用户: ${u.name || u.account}` : `未找到用户`);
             if (u) return u.name || u.account || id;
-            // 调试：如果未匹配到用户，打印调试信息
-            if (userMap.size > 0 && /^\d+$/.test(id)) {
-              console.log(`【调试】未找到用户ID: ${id}，userMap keys:`, Array.from(userMap.keys()));
-            }
             // 若不是纯数字（可能已是姓名/账号），直接显示原值
             if (/\D/.test(id)) return id;
             // 纯数字但未匹配到用户，兜底显示
@@ -911,6 +914,45 @@ export const FormDataList: React.FC<FormDataListProps> = ({
         return wrap(String(value));
       }
 
+      // 附件/图片：antd Upload 存对象或 fileList，禁止 String(obj) 成 [object Object]
+      if (field?.type === "attachment") {
+        const urls = extractAttachmentPreviewUrls(value);
+        if (!urls.length) return wrap("-");
+        const wrapMedia = (content: React.ReactNode) => (
+          <div>
+            <div className={`${styles.h3TgCell} ${styles.runtime}`}>{content}</div>
+          </div>
+        );
+        return wrapMedia(
+          <span
+            style={{
+              display: "inline-flex",
+              gap: 4,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            {urls.slice(0, 3).map((url, i) => (
+              <img
+                key={`${url}-${i}`}
+                src={url}
+                alt=""
+                style={{
+                  maxHeight: 44,
+                  maxWidth: 72,
+                  objectFit: "cover",
+                  borderRadius: 4,
+                  verticalAlign: "middle",
+                }}
+              />
+            ))}
+            {urls.length > 3 ? (
+              <span style={{ color: "#888", fontSize: 12 }}>+{urls.length - 3}</span>
+            ) : null}
+          </span>
+        );
+      }
+
       if (Array.isArray(value)) {
         const text = value
           .map((v: any) => v?.name || v?.label || v)
@@ -929,6 +971,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   // antd Table 列定义（先保证能正常显示数据）
   const tableColumns = useMemo(() => {
     const cols: any[] = [];
+    const colW = (colKey: string, def: number) => columnWidths[colKey] ?? def;
 
     const toggleFixed = (key: string) => {
       setFixedColumnKeys((prev) => {
@@ -963,10 +1006,15 @@ export const FormDataList: React.FC<FormDataListProps> = ({
 
     // 序号
     cols.push({
+      key: "_serial",
       title: "序号",
       dataIndex: "_rowIndex",
-      width: 70,
+      width: colW("_serial", DEFAULT_W_SERIAL),
       fixed: "left" as const,
+      onHeaderCell: (column: any) => ({
+        width: column.width,
+        onResize: handleColumnResize("_serial"),
+      }),
     });
 
     allFieldsList.forEach((f: any) => {
@@ -987,6 +1035,11 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           cols.push({
             title,
             key: visibleKey,
+            width: colW(visibleKey, DEFAULT_W_SUB),
+            onHeaderCell: (column: any) => ({
+              width: column.width,
+              onResize: handleColumnResize(visibleKey),
+            }),
             render: (_: any, record: any) => {
               let raw = record[parentFieldId] ?? record[f.fieldName];
               let rows: any[] = [];
@@ -1048,6 +1101,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
 
       if (!visibleFields.has(key)) return;
       const isFixed = fixedColumnKeys.includes(key);
+      const colKey = String(key);
       const title = buildTitleWithLock(
         f.label || f.fieldName || key,
         key.toString(),
@@ -1059,8 +1113,14 @@ export const FormDataList: React.FC<FormDataListProps> = ({
       
       cols.push({
         title,
+        key: colKey,
         dataIndex: key,
+        width: colW(colKey, DEFAULT_W_FIELD),
         fixed: isFixed ? ("left" as const) : undefined,
+        onHeaderCell: (column: any) => ({
+          width: column.width,
+          onResize: handleColumnResize(colKey),
+        }),
         render: (value: any, record: any) => renderCellValue(f, value, record),
         sorter: canSort ? (a: any, b: any) => {
           let aVal = a[key];
@@ -1092,7 +1152,11 @@ export const FormDataList: React.FC<FormDataListProps> = ({
       title: "操作",
       key: "_actions",
       fixed: "right" as const,
-      width: 120,
+      width: colW("_actions", DEFAULT_W_ACTIONS),
+      onHeaderCell: (column: any) => ({
+        width: column.width,
+        onResize: handleColumnResize("_actions"),
+      }),
       render: (_: any, record: any) => {
         const recordId = record.recordId || record.id;
         return (
@@ -1129,6 +1193,8 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     fixedColumnKeys,
     onView,
     sortConfig,
+    columnWidths,
+    handleColumnResize,
   ]);
 
   if (formLoading || isLoading) {
@@ -1432,75 +1498,128 @@ export const FormDataList: React.FC<FormDataListProps> = ({
         </div>
       </div>
 
-      {/* 中部表格区域 */}
-      <div className={styles.tableContainer}>
-        {rowData.length === 0 ? (
-          <div className={styles.emptyMessage}>
-            <Empty description="暂无数据" />
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+      {/* 列表外框：边框内表格区贴底到分页，中间不留大块空白 */}
+      <div className={styles.listFrame}>
+        {/* 中部表格区域 */}
+        <div className={styles.tableContainer}>
+          {rowData.length === 0 ? (
+            <div className={styles.emptyMessage}>
+              <Empty description="暂无数据" />
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
               <div
-                ref={(el) => {
-                  if (el) {
-                    const tableBody = el.querySelector(".ant-table-body") as HTMLElement;
-                    if (tableBody) {
-                      (tableBodyRef as any).current = tableBody;
-                    }
-                  }
-                }}
+                style={{ flex: 1, overflow: "hidden", position: "relative" }}
               >
-                <Table
-                  size="small"
-                  rowKey="recordId"
-                  columns={tableColumns}
-                  dataSource={pagedRowData}
-                  pagination={false}
-                  scroll={{ x: "max-content", y: 385 }}
-                  style={{ marginBottom: 0 }}
-                  rowSelection={{
-                    selectedRowKeys,
-                    onChange: (keys) =>
-                      setSelectedRowKeys(keys as React.Key[] as string[]),
+                <div
+                  ref={(el) => {
+                    if (el) {
+                      const tableBody = el.querySelector(".ant-table-body") as HTMLElement;
+                      if (tableBody) {
+                        (tableBodyRef as any).current = tableBody;
+                      }
+                    }
                   }}
-                  onChange={(_pagination, _filters, sorter: any) => {
-                    // 处理排序变化
-                    if (sorter) {
-                      // sorter 可能是对象或数组，处理单列排序
-                      const sortObj = Array.isArray(sorter) ? sorter[0] : sorter;
-                      if (sortObj && sortObj.field) {
-                        const newSortConfig = {
-                          key: sortObj.field,
-                          order: sortObj.order === 'ascend' ? 'asc' as const : 'desc' as const,
-                        };
-                        setSortConfig(newSortConfig);
-                        saveSortConfig(newSortConfig);
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    height: "100%",
+                    minHeight: 0,
+                  }}
+                >
+                  <Table
+                    size="small"
+                    bordered
+                    rowKey="recordId"
+                    columns={tableColumns}
+                    dataSource={pagedRowData}
+                    pagination={false}
+                    scroll={{ x: "max-content", y: tableScrollY }}
+                    style={{ marginBottom: 0 }}
+                    tableLayout="fixed"
+                    components={{
+                      header: { cell: ResizableHeaderCell },
+                    }}
+                    rowSelection={{
+                      selectedRowKeys,
+                      onChange: (keys) =>
+                        setSelectedRowKeys(keys as React.Key[] as string[]),
+                    }}
+                    onChange={(_pagination, _filters, sorter: any) => {
+                      // 处理排序变化
+                      if (sorter) {
+                        // sorter 可能是对象或数组，处理单列排序
+                        const sortObj = Array.isArray(sorter) ? sorter[0] : sorter;
+                        if (sortObj && sortObj.field) {
+                          const newSortConfig = {
+                            key: sortObj.field,
+                            order: sortObj.order === 'ascend' ? 'asc' as const : 'desc' as const,
+                          };
+                          setSortConfig(newSortConfig);
+                          saveSortConfig(newSortConfig);
+                        } else {
+                          setSortConfig(null);
+                          saveSortConfig(null);
+                        }
                       } else {
                         setSortConfig(null);
                         saveSortConfig(null);
                       }
-                    } else {
-                      setSortConfig(null);
-                      saveSortConfig(null);
+                    }}
+                    onRow={
+                      listWorkflowHoverEnabled
+                        ? (record) => ({
+                            onMouseEnter: (e) => {
+                              clearRowHoverTimers();
+                              // 必须在同步阶段保存 DOM 节点：React 合成事件在返回后 currentTarget 会被置空，异步里读会报错
+                              const rowEl = e.currentTarget as HTMLElement | null;
+                              const id = String(
+                                (record as any).recordId || (record as any).id || "",
+                              );
+                              if (!id || !rowEl) return;
+                              rowHoverEnterTimer.current = window.setTimeout(() => {
+                                if (!rowEl.isConnected) return;
+                                const r = rowEl.getBoundingClientRect();
+                                setRowHoverTip({
+                                  recordId: id,
+                                  left: Math.max(8, Math.min(r.left, window.innerWidth - 316)),
+                                  top: r.bottom + 6,
+                                });
+                              }, 450);
+                            },
+                            onMouseLeave: () => {
+                              clearRowHoverTimers();
+                              rowHoverLeaveTimer.current = window.setTimeout(
+                                () => setRowHoverTip(null),
+                                200,
+                              );
+                            },
+                          })
+                        : undefined
                     }
-                  }}
-                />
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* 底部区域（分页 + 横向滚动条，整体贴到卡片最底部） */}
-      <div style={{ marginTop: "auto", flexShrink: 0 }}>
+        {/* 底部区域：横向细条紧贴表格下方，再分页（与参考产品一致） */}
+        <div
+          style={{
+            marginTop: "auto",
+            flexShrink: 0,
+            borderTop: "1px solid #f0f0f0",
+            paddingTop: 8,
+          }}
+        >
         {/* 底部分页栏 */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginTop: 8,
+            marginTop: 0,
           }}
         >
           <div />
@@ -1522,16 +1641,42 @@ export const FormDataList: React.FC<FormDataListProps> = ({
             />
           </Space>
         </div>
-
-        {/* 横向滚动条（最底部） */}
-        <div ref={scrollbarContainerRef} className={styles.fixedScrollbarContainer}>
-          <div
-            ref={scrollbarThumbRef}
-            className={styles.fixedScrollbarThumb}
-            style={{ display: "none" }}
-          />
         </div>
       </div>
+
+      {listWorkflowHoverEnabled &&
+        rowHoverTip &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              left: rowHoverTip.left,
+              top: rowHoverTip.top,
+              zIndex: 1070,
+              width: 300,
+              maxWidth: "calc(100vw - 24px)",
+              pointerEvents: "auto",
+              boxShadow: "0 3px 12px rgba(0, 0, 0, 0.12)",
+              borderRadius: 8,
+              border: "1px solid #f0f0f0",
+              background: "#fff",
+              padding: "10px 12px",
+            }}
+            onMouseEnter={() => clearRowHoverTimers()}
+            onMouseLeave={() => {
+              rowHoverLeaveTimer.current = window.setTimeout(
+                () => setRowHoverTip(null),
+                120,
+              );
+            }}
+          >
+            <WorkflowRowHoverCardContent
+              recordId={rowHoverTip.recordId}
+              formWorkflowEnabled={formWorkflowEnabled}
+            />
+          </div>,
+          document.body,
+        )}
 
       {/* 删除确认弹窗 */}
       <Modal

@@ -11,6 +11,7 @@ export interface RegisterDto {
   name: string;
   email: string;
   phone?: string;
+  inviteCode: string;
 }
 
 export interface AuthResponse {

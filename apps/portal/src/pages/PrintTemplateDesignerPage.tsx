@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useLayoutEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Layout, Button, Space, Input, Typography, Card, Radio, Select, InputNumber, Collapse, Avatar, Modal, Dropdown, Tag } from "antd";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -49,121 +49,10 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { SpreadsheetEditor } from "@/components/SpreadsheetEditor";
 import type { SpreadsheetEditorRef } from "@/components/SpreadsheetEditor";
 import { DraggableFieldItem } from "@/components/DraggableFieldItem";
+import { PrintPreviewTable } from "@/components/PrintPreviewTable";
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
-
-// 打印预览表格组件：根据当前编辑数据动态渲染行列/合并
-const PreviewTable: React.FC<{ previewData: any }> = ({ previewData }) => {
-  const cells: Record<string, any> = previewData?.cells || {};
-  const mergedCells: any[] = previewData?.mergedCells || [];
-  const columnWidths: Record<number, number> = previewData?.columnWidths || {};
-  const rowHeights: Record<number, number> = previewData?.rowHeights || {};
-  const orientation = previewData?.orientation || "portrait"; // 获取纸张方向
-
-  const maxRowFromCells = Math.max(
-    -1,
-    ...Object.keys(cells).map((k) => parseInt(k.split("-")[0], 10))
-  );
-  const maxRowFromMerge = Math.max(-1, ...mergedCells.map((m) => m.endRow));
-  const maxRowFromHeight = Math.max(-1, ...Object.keys(rowHeights).map((k) => parseInt(k, 10)));
-  const rowCount = Math.max(maxRowFromCells, maxRowFromMerge, maxRowFromHeight, 19) + 1;
-
-  const maxColFromCells = Math.max(
-    -1,
-    ...Object.keys(cells).map((k) => parseInt(k.split("-")[1], 10))
-  );
-  const maxColFromMerge = Math.max(-1, ...mergedCells.map((m) => m.endCol));
-  const maxColFromWidth = Math.max(-1, ...Object.keys(columnWidths).map((k) => parseInt(k, 10)));
-  const colCount = Math.max(maxColFromCells, maxColFromMerge, maxColFromWidth, 11) + 1;
-
-  const getWidth = (col: number) => columnWidths[col] || 80;
-  const getHeight = (row: number) => rowHeights[row] || 25;
-  const getCell = (row: number, col: number) => cells[`${row}-${col}`];
-
-  const findMerge = (row: number, col: number) =>
-    mergedCells.find(
-      (m) =>
-        row >= m.startRow &&
-        row <= m.endRow &&
-        col >= m.startCol &&
-        col <= m.endCol
-    );
-
-  // 根据纸张方向计算预览容器尺寸
-  // A4纵向: 210mm x 297mm, 横向: 297mm x 210mm
-  const isPortrait = orientation === "portrait";
-  const previewWidth = isPortrait ? "210mm" : "297mm";
-  const previewHeight = isPortrait ? "297mm" : "210mm";
-
-  return (
-    <div 
-      style={{ 
-        overflow: "auto", 
-        background: "#fff",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "flex-start",
-        padding: "20px",
-      }}
-    >
-      <div
-        style={{
-          width: previewWidth,
-          minHeight: previewHeight,
-          background: "#fff",
-          boxShadow: "0 0 10px rgba(0,0,0,0.1)",
-          padding: "20px",
-        }}
-      >
-        <table
-          style={{
-            tableLayout: "fixed",
-            width: "100%",
-            borderCollapse: "collapse",
-          }}
-        >
-          <tbody>
-            {Array.from({ length: rowCount }, (_, rowIndex) => (
-              <tr key={rowIndex} style={{ height: getHeight(rowIndex) }}>
-                {Array.from({ length: colCount }, (_, colIndex) => {
-                  const merged = findMerge(rowIndex, colIndex);
-                  const isHidden =
-                    merged &&
-                    !(merged.startRow === rowIndex && merged.startCol === colIndex);
-                  if (isHidden) return null;
-                  const rowSpan = merged ? merged.endRow - merged.startRow + 1 : 1;
-                  const colSpan = merged ? merged.endCol - merged.startCol + 1 : 1;
-                  const baseCell = merged
-                    ? getCell(merged.startRow, merged.startCol)
-                    : getCell(rowIndex, colIndex);
-                  const value = baseCell?.value || "";
-                  return (
-                    <td
-                      key={colIndex}
-                      rowSpan={rowSpan > 1 ? rowSpan : undefined}
-                      colSpan={colSpan > 1 ? colSpan : undefined}
-                      style={{
-                        padding: "6px 8px",
-                        minWidth: getWidth(colIndex),
-                        width: getWidth(colIndex),
-                        fontSize: 13,
-                        wordBreak: "break-all",
-                        border: "none",
-                      }}
-                    >
-                      {value}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
 
 export const PrintTemplateDesignerPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -260,7 +149,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   const handleUserMenuClick = ({ key }: { key: string }) => {
     switch (key) {
       case "tenant-switch":
-        console.log("[PrintTemplateDesignerPage] tenant-switch menu onClick key:", key);
+        // no-op
         void handleTenantSwitchOpen();
         break;
       case "site":
@@ -351,12 +240,10 @@ export const PrintTemplateDesignerPage: React.FC = () => {
     retry: 1,
   });
 
-  // 调试：打印模板加载状态
+  // 打印模板加载状态
   React.useEffect(() => {
     if (currentTemplateId) {
-      console.log("当前模板ID:", currentTemplateId);
-      console.log("模板加载中:", isLoadingTemplate);
-      console.log("模板数据:", templateData);
+      // no-op
       if (templateError) {
         console.error("模板加载错误:", templateError);
         message.warning("模板加载失败，将使用空白模板");
@@ -367,15 +254,24 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   // 保存模板的 mutation
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
+      // 优先 update；如果模板不存在则 fallback 为 create（避免 URL 带错 templateId 或 localStorage 状态不一致导致“看似保存了但实际上写入失败”）
       if (currentTemplateId) {
-        return printTemplateApi.update(currentTemplateId, data);
-      } else {
-        return printTemplateApi.create(data);
+        try {
+          return await printTemplateApi.update(currentTemplateId, data);
+        } catch (e: any) {
+          const msg = String(e?.message || e);
+          if (msg.includes("模板不存在")) {
+            return printTemplateApi.create(data);
+          }
+          throw e;
+        }
       }
+      return printTemplateApi.create(data);
     },
     onSuccess: (res) => {
       message.success("模板保存成功");
-      queryClient.invalidateQueries({ queryKey: ["printTemplates", formId] });
+      // 放宽失效范围：FormSettingsPage 在 formId 丢失时会用其它 queryKey
+      queryClient.invalidateQueries({ queryKey: ["printTemplates"], exact: false });
       // 新建或更新后，确保模板ID已记录并写回URL，确保刷新还能加载
       if (res?.id) {
         const newTemplateId = res.id;
@@ -383,7 +279,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
         const url = new URL(window.location.href);
         url.searchParams.set("templateId", newTemplateId);
         window.history.replaceState(null, "", url.toString());
-        console.log("模板已保存，ID:", newTemplateId, "URL已更新");
+        // no-op
         // 刷新模板数据查询，确保数据同步
         queryClient.invalidateQueries({ queryKey: ["printTemplate", newTemplateId] });
       }
@@ -393,6 +289,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
       }
     },
     onError: (error: any) => {
+      console.error("[PrintTemplateDesignerPage] 保存失败:", error);
       message.error(error.response?.data?.message || "保存失败");
     },
   });
@@ -424,31 +321,31 @@ export const PrintTemplateDesignerPage: React.FC = () => {
 
   const formFields = effectiveFormDefinition?.config?.fields || [];
 
-  // 当模板数据加载完成时，设置到编辑器
-  // 注意：这个 useEffect 必须在所有条件返回之前，遵守 Hooks 规则
-  React.useEffect(() => {
-    if (templateData && spreadsheetRef.current) {
-      console.log("加载模板数据到编辑器:", templateData);
-      // 使用setTimeout确保编辑器已完全初始化
-      const timer = setTimeout(() => {
-        if (spreadsheetRef.current) {
-          spreadsheetRef.current.setData({
-            cells: templateData.cells || {},
-            mergedCells: templateData.mergedCells || [],
-            columnWidths: templateData.columnWidths || {},
-            rowHeights: templateData.rowHeights || {},
-          });
-          // 更新设置
-          setPrintType(templateData.printType || "document");
-          setPrintMode(templateData.printMode || "paginated");
-          setPaperSize(templateData.paperSize || "A4");
-          setOrientation(templateData.orientation || "portrait");
-          setMargins(templateData.margins || { top: 20, bottom: 20, left: 17, right: 17 });
-          console.log("模板数据已设置到编辑器");
-        }
-      }, 100);
-      return () => clearTimeout(timer);
-    }
+  const spreadsheetBootstrap = React.useMemo(() => {
+    if (!templateData) return undefined;
+    return {
+      cells: templateData.cells || {},
+      mergedCells: templateData.mergedCells || [],
+      columnWidths: templateData.columnWidths || {},
+      rowHeights: templateData.rowHeights || {},
+    };
+  }, [templateData]);
+
+  const spreadsheetBootstrapKey = React.useMemo(() => {
+    if (templateData?.id)
+      return `${templateData.id}:${(templateData as any).updatedAt ?? ""}`;
+    if (currentTemplateId) return `loading:${currentTemplateId}`;
+    return "new";
+  }, [templateData, currentTemplateId]);
+
+  // 打印版式与 Spreadsheet 列数联动；layout 先于 paint 同步，减少先竖版再横版的闪动
+  useLayoutEffect(() => {
+    if (!templateData) return;
+    setPrintType(templateData.printType || "document");
+    setPrintMode(templateData.printMode || "paginated");
+    setPaperSize(templateData.paperSize || "A4");
+    setOrientation(templateData.orientation || "portrait");
+    setMargins(templateData.margins || { top: 20, bottom: 20, left: 17, right: 17 });
   }, [templateData]);
 
   // 如果没有 formId，显示提示
@@ -461,10 +358,58 @@ export const PrintTemplateDesignerPage: React.FC = () => {
     );
   }
 
-  // 业务字段（表单中的字段）
-  const businessFields = formFields.filter((field: any) => 
-    !["ObjectId", "owner", "owningDepartment", "modifier", "createdAt", "updatedAt"].includes(field.fieldId)
-  );
+  // 业务字段（表单中的字段），子表展开为“字段明细”可拖拽项
+  const businessFields = React.useMemo(() => {
+    const blocked = new Set([
+      "ObjectId",
+      "owner",
+      "owningDepartment",
+      "modifier",
+      "createdAt",
+      "updatedAt",
+    ]);
+
+    const result: Array<{ fieldId: string; label: string; type: string; subtableFields?: any[] }> = [];
+
+    (formFields || []).forEach((field: any, idx: number) => {
+      const fieldId = String(field?.fieldId || "");
+      if (blocked.has(fieldId)) return;
+
+      // 子表字段展开：主字段 + 子字段明细
+      if (field?.type === "subtable" && Array.isArray(field?.subtableFields)) {
+        const parentLabel = String(field?.label || field?.fieldName || fieldId || `子表${idx + 1}`);
+
+        result.push({
+          fieldId,
+          label: parentLabel,
+          type: "subtable",
+          subtableFields: field.subtableFields,
+        });
+
+        field.subtableFields.forEach((sub: any, subIdx: number) => {
+          const subId = String(sub?.fieldId || sub?.name || `sub_${subIdx + 1}`);
+          const subLabel = String(
+            sub?.label || sub?.fieldName || sub?.name || `明细${subIdx + 1}`,
+          );
+          // 用 parent.child 形式保留层级语义，便于后续真实取值
+          result.push({
+            fieldId: `${fieldId}.${subId}`,
+            label: `${parentLabel} · ${subLabel}`,
+            type: "subtable-field",
+          });
+        });
+        return;
+      }
+
+      result.push({
+        fieldId,
+        label: String(field?.label || field?.fieldName || fieldId),
+        type: String(field?.type || "text"),
+      });
+    });
+
+    return result;
+  }, [formFields]);
 
   // 系统字段
   const systemFields = [
@@ -485,10 +430,8 @@ export const PrintTemplateDesignerPage: React.FC = () => {
   // 处理拖拽结束
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over) return;
-
     const fieldData = active.data.current;
-    const cellData = over.data.current;
+    const cellData = over?.data.current as any;
 
     if (fieldData?.type === "field" && cellData?.type === "cell") {
       const { fieldId, label } = fieldData;
@@ -496,10 +439,19 @@ export const PrintTemplateDesignerPage: React.FC = () => {
       if (spreadsheetRef.current) {
         spreadsheetRef.current.insertField(row, col, fieldId, label);
       }
+      return;
+    }
+
+    // Luckysheet 场景下没有逐格 droppable，回退为插入到当前选中单元格
+    if (fieldData?.type === "field" && spreadsheetRef.current) {
+      const { fieldId, label } = fieldData;
+      const range = spreadsheetRef.current.getSelectedRange();
+      if (!range) return;
+      spreadsheetRef.current.insertField(range.startRow, range.startCol, fieldId, label);
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formId) {
       message.error("缺少表单ID");
       return;
@@ -510,23 +462,28 @@ export const PrintTemplateDesignerPage: React.FC = () => {
       return;
     }
 
-    // 保存前先提交未结束的编辑内容
-    spreadsheetRef.current.commitEditing();
-    const editorData = spreadsheetRef.current.getAllData();
-    
-    const saveData = {
-      formId,
-      name: templateName,
-      type: templateType as "excel" | "blank",
-      printType,
-      printMode,
-      paperSize,
-      orientation,
-      margins,
-      ...editorData,
-    };
+    try {
+      // 保存前先提交未结束的编辑内容
+      spreadsheetRef.current.commitEditing();
+      const editorData = spreadsheetRef.current.getAllData();
 
-    saveMutation.mutate(saveData);
+      const saveData = {
+        formId,
+        name: templateName,
+        type: templateType as "excel" | "blank",
+        printType,
+        printMode,
+        paperSize,
+        orientation,
+        margins,
+        ...editorData,
+      };
+
+      await saveMutation.mutateAsync(saveData);
+    } catch (e: any) {
+      console.error("[PrintTemplateDesignerPage] handleSave 捕获错误:", e);
+      message.error(e?.message || "保存失败");
+    }
   };
 
   const handlePreview = () => {
@@ -617,7 +574,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
                   label: "切换",
                   // 兜底：确保点击一定触发打开（有些 AntD Dropdown 使用场景下 menu.onClick 不触发）
                   onClick: () => {
-                    console.log("[PrintTemplateDesignerPage] tenant-switch item onClick");
+                    // no-op
                     void handleTenantSwitchOpen();
                   },
                 },
@@ -732,6 +689,33 @@ export const PrintTemplateDesignerPage: React.FC = () => {
                             fieldId={field.fieldId}
                             label={field.label}
                             type={field.type}
+                            rightSlot={
+                              field.type === "subtable" ? (
+                                <Button
+                                  size="small"
+                                  type="link"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const cols = Array.isArray(field.subtableFields)
+                                      ? field.subtableFields.map((sf: any, i: number) => ({
+                                          fieldId: String(sf?.fieldId || sf?.name || `col_${i + 1}`),
+                                          label: String(
+                                            sf?.label || sf?.fieldName || sf?.name || `字段${i + 1}`,
+                                          ),
+                                        }))
+                                      : [];
+                                    spreadsheetRef.current?.insertSubtableBlock(
+                                      String(field.fieldId),
+                                      String(field.label),
+                                      cols,
+                                    );
+                                  }}
+                                >
+                                  插入明细表
+                                </Button>
+                              ) : null
+                            }
                           />
                         ))}
                       </div>
@@ -778,22 +762,123 @@ export const PrintTemplateDesignerPage: React.FC = () => {
               }}
             >
               <Space>
-                <Button size="small" icon={<UndoOutlined />} title="撤销" />
-                <Button size="small" icon={<RedoOutlined />} title="重做" />
-                <Select size="small" defaultValue="黑体" style={{ width: 100 }} />
-                <Select size="small" defaultValue="9" style={{ width: 60 }} />
-                <Button size="small" icon={<FontColorsOutlined />} title="文字颜色" />
-                <Button size="small" icon={<BgColorsOutlined />} title="填充颜色" />
-                <Button size="small" icon={<BoldOutlined />} title="粗体" />
-                <Button size="small" icon={<ItalicOutlined />} title="斜体" />
-                <Button size="small" icon={<UnderlineOutlined />} title="下划线" />
-                <Button size="small" icon={<StrikethroughOutlined />} title="删除线" />
-                <Button size="small" icon={<AlignLeftOutlined />} title="左对齐" />
-                <Button size="small" icon={<AlignCenterOutlined />} title="居中" />
-              <Button size="small" icon={<AlignRightOutlined />} title="右对齐" />
-              <Button size="small" icon={<VerticalAlignTopOutlined />} title="顶部对齐" />
-              <Button size="small" icon={<VerticalAlignMiddleOutlined />} title="垂直居中" />
-              <Button size="small" icon={<VerticalAlignBottomOutlined />} title="底部对齐" />
+                <Button
+                  size="small"
+                  icon={<UndoOutlined />}
+                  title="撤销"
+                  onClick={() => spreadsheetRef.current?.undo()}
+                />
+                <Button
+                  size="small"
+                  icon={<RedoOutlined />}
+                  title="重做"
+                  onClick={() => spreadsheetRef.current?.redo()}
+                />
+                <Select
+                  size="small"
+                  defaultValue="黑体"
+                  style={{ width: 100 }}
+                  options={[
+                    { value: "宋体", label: "宋体" },
+                    { value: "黑体", label: "黑体" },
+                    { value: "微软雅黑", label: "微软雅黑" },
+                    { value: "Arial", label: "Arial" },
+                    { value: "Times New Roman", label: "Times New Roman" },
+                  ]}
+                  onChange={(v) => spreadsheetRef.current?.setFontFamily(String(v))}
+                />
+                <Select
+                  size="small"
+                  defaultValue="9"
+                  style={{ width: 60 }}
+                  options={[
+                    "8",
+                    "9",
+                    "10",
+                    "11",
+                    "12",
+                    "14",
+                    "16",
+                    "18",
+                    "20",
+                    "24",
+                    "28",
+                    "32",
+                  ].map((v) => ({ value: v, label: v }))}
+                  onChange={(v) => spreadsheetRef.current?.setFontSize(Number(v))}
+                />
+                <Button
+                  size="small"
+                  icon={<FontColorsOutlined />}
+                  title="文字颜色"
+                  onClick={() => spreadsheetRef.current?.setFontColor("#000000")}
+                />
+                <Button
+                  size="small"
+                  icon={<BgColorsOutlined />}
+                  title="填充颜色"
+                  onClick={() => spreadsheetRef.current?.setCellBgColor("#fff2cc")}
+                />
+                <Button
+                  size="small"
+                  icon={<BoldOutlined />}
+                  title="粗体"
+                  onClick={() => spreadsheetRef.current?.toggleBold()}
+                />
+                <Button
+                  size="small"
+                  icon={<ItalicOutlined />}
+                  title="斜体"
+                  onClick={() => spreadsheetRef.current?.toggleItalic()}
+                />
+                <Button
+                  size="small"
+                  icon={<UnderlineOutlined />}
+                  title="下划线"
+                  onClick={() => spreadsheetRef.current?.toggleUnderline()}
+                />
+                <Button
+                  size="small"
+                  icon={<StrikethroughOutlined />}
+                  title="删除线"
+                  onClick={() => spreadsheetRef.current?.toggleStrike()}
+                />
+                <Button
+                  size="small"
+                  icon={<AlignLeftOutlined />}
+                  title="左对齐"
+                  onClick={() => spreadsheetRef.current?.alignHorizontal("left")}
+                />
+                <Button
+                  size="small"
+                  icon={<AlignCenterOutlined />}
+                  title="居中"
+                  onClick={() => spreadsheetRef.current?.alignHorizontal("center")}
+                />
+                <Button
+                  size="small"
+                  icon={<AlignRightOutlined />}
+                  title="右对齐"
+                  onClick={() => spreadsheetRef.current?.alignHorizontal("right")}
+                />
+                <Button
+                  size="small"
+                  icon={<VerticalAlignTopOutlined />}
+                  title="顶部对齐"
+                  onClick={() => spreadsheetRef.current?.alignVertical("top")}
+                />
+                <Button
+                  size="small"
+                  icon={<VerticalAlignMiddleOutlined />}
+                  title="垂直居中"
+                  onClick={() => spreadsheetRef.current?.alignVertical("middle")}
+                />
+                <Button
+                  size="small"
+                  icon={<VerticalAlignBottomOutlined />}
+                  title="底部对齐"
+                  onClick={() => spreadsheetRef.current?.alignVertical("bottom")}
+                />
               <Button
                 size="small"
                 icon={<AppstoreOutlined />}
@@ -814,6 +899,20 @@ export const PrintTemplateDesignerPage: React.FC = () => {
                   }
                 }}
               />
+              <Button
+                size="small"
+                title="为选中区域添加全部边框（打印时显示；未设边框的格子不画线）"
+                onClick={() => spreadsheetRef.current?.setSelectionBorderAll()}
+              >
+                框线
+              </Button>
+              <Button
+                size="small"
+                title="清除选中区域的边框"
+                onClick={() => spreadsheetRef.current?.clearSelectionBorders()}
+              >
+                去框
+              </Button>
               <Button
                 size="small"
                 title="编辑单元格"
@@ -838,11 +937,12 @@ export const PrintTemplateDesignerPage: React.FC = () => {
               <SpreadsheetEditor
                 ref={spreadsheetRef}
                 rows={20}
-                cols={12}
+                cols={orientation === "portrait" ? 12 : 16}
                 orientation={orientation}
-                onCellChange={(row, col, value) => {
-                  // 处理单元格内容变化
-                  console.log(`Cell ${row}-${col} changed to: ${value}`);
+                bootstrapData={spreadsheetBootstrap}
+                bootstrapRevision={spreadsheetBootstrapKey}
+                onCellChange={() => {
+                  // handled by SpreadsheetEditor internal state
                 }}
                 onFieldDrop={(row, col, fieldId, fieldLabel) => {
                   // 处理字段拖拽到单元格
@@ -1017,11 +1117,15 @@ export const PrintTemplateDesignerPage: React.FC = () => {
         style={{ top: 20 }}
       >
           {previewData && (
-          <div style={{ padding: 20, background: "#fff" }}>
+          <div style={{ padding: 20, background: "#f5f5f5" }}>
             <div style={{ marginBottom: 16, textAlign: "center", fontSize: 18, fontWeight: 500 }}>
               {previewData.name}
             </div>
-            <PreviewTable previewData={previewData} />
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div style={{ boxShadow: "0 0 10px rgba(0,0,0,0.1)" }}>
+                <PrintPreviewTable previewData={previewData} minRowCount={20} minColCount={12} />
+              </div>
+            </div>
           </div>
         )}
       </Modal>

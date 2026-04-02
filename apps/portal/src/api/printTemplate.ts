@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import type { PrintCellStyle } from "@/utils/printCellStyle";
 
 export interface PrintTemplate {
   id: string;
@@ -20,6 +21,7 @@ export interface PrintTemplate {
     col: number;
     value: string;
     fieldId?: string;
+    style?: PrintCellStyle;
   }>;
   mergedCells: Array<{
     startRow: number;
@@ -52,6 +54,7 @@ export interface CreatePrintTemplateDto {
     col: number;
     value: string;
     fieldId?: string;
+    style?: PrintCellStyle;
   }>;
   mergedCells: Array<{
     startRow: number;
@@ -71,21 +74,31 @@ const loadLocal = (): PrintTemplate[] => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
-  } catch {
+  } catch (e) {
+    console.error("[printTemplateApi] localStorage parse failed:", e);
     return [];
   }
 };
 
 const saveLocal = (data: PrintTemplate[]) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e: any) {
+    // 尽量把失败原因暴露出来，便于排查 localStorage 被禁用 / 超额 / 序列化异常等
+    console.error("[printTemplateApi] localStorage write failed:", e);
+    throw new Error(`本地存储失败：${e?.message || String(e)}`);
+  }
 };
 
 const genId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`;
 
 export const printTemplateApi = {
   // 获取表单的所有打印模板（本地存储）
-  getByFormId: async (formId: string): Promise<PrintTemplate[]> => {
+  getByFormId: async (formId?: string): Promise<PrintTemplate[]> => {
     const list = loadLocal().filter((t) => t.formId === formId);
+    if (!formId) {
+      return loadLocal();
+    }
     return list;
   },
 

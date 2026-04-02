@@ -28,7 +28,7 @@ import { businessRuleApi } from "@/api/businessRule";
 import { printTemplateApi } from "@/api/printTemplate";
 import { useFormDesignerStore } from "@/modules/form-designer/store/useFormDesignerStore";
 import { message } from "antd";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 const { Text } = Typography;
 const { Option, OptGroup } = Select;
@@ -2730,6 +2730,8 @@ const ExternalLinkSettings: React.FC<{ formId?: string }> = ({ formId }) => {
 
 // 打印模板设置组件
 const PrintTemplateSettings: React.FC<{ formId?: string }> = ({ formId }) => {
+  const [searchParams] = useSearchParams();
+  const effectiveFormId = formId ?? searchParams.get("formId") ?? undefined;
   const [modalVisible, setModalVisible] = useState(false);
   const [templateType, setTemplateType] = useState<"excel" | "blank">("excel");
   const [form] = Form.useForm();
@@ -2738,28 +2740,32 @@ const PrintTemplateSettings: React.FC<{ formId?: string }> = ({ formId }) => {
 
   // 获取模板列表
   const { data: templates = [], isLoading, refetch } = useQuery({
-    queryKey: ["printTemplates", formId],
-    queryFn: () => printTemplateApi.getByFormId(formId!),
-    enabled: !!formId,
+    // formId 丢失时依然返回 localStorage 里的全部模板，避免「列表一下就没了」
+    queryKey: ["printTemplates", effectiveFormId ?? "__ALL__"],
+    queryFn: () => printTemplateApi.getByFormId(effectiveFormId),
+    enabled: true,
   });
 
   // 监听来自子窗口的消息，刷新列表
   React.useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "template-saved" && event.data?.formId === formId) {
+      if (
+        event.data?.type === "template-saved" &&
+        (effectiveFormId ? event.data?.formId === effectiveFormId : true)
+      ) {
         refetch();
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [formId, refetch]);
+  }, [effectiveFormId, refetch]);
 
   // 删除模板
   const deleteMutation = useMutation({
     mutationFn: (id: string) => printTemplateApi.delete(id),
     onSuccess: () => {
       message.success("删除成功");
-      queryClient.invalidateQueries({ queryKey: ["printTemplates", formId] });
+      queryClient.invalidateQueries({ queryKey: ["printTemplates"], exact: false });
     },
     onError: (error: any) => {
       message.error(error.response?.data?.message || "删除失败");
@@ -2786,8 +2792,12 @@ const PrintTemplateSettings: React.FC<{ formId?: string }> = ({ formId }) => {
       form.resetFields();
       
       // 在新标签页打开打印模板设计器页面
-      const url = `/designer/print-template?formId=${formId}&type=${templateType}&name=${encodeURIComponent(templateName)}`;
-      window.open(url, '_blank');
+      if (!effectiveFormId) {
+        message.error("缺少表单ID，无法创建模板");
+        return;
+      }
+      const url = `/designer/print-template?formId=${effectiveFormId}&type=${templateType}&name=${encodeURIComponent(templateName)}`;
+      window.open(url, "_blank");
     } catch (error) {
       console.error("表单验证失败:", error);
     }
@@ -2810,7 +2820,8 @@ const PrintTemplateSettings: React.FC<{ formId?: string }> = ({ formId }) => {
   ];
 
   const handleEdit = (template: any) => {
-    const url = `/designer/print-template?formId=${formId}&templateId=${template.id}&type=${template.type}&name=${encodeURIComponent(template.name)}`;
+    // 用模板自身的 formId，确保即使当前页面 formId 丢失也能正确打开并保存回去
+    const url = `/designer/print-template?formId=${template.formId}&templateId=${template.id}&type=${template.type}&name=${encodeURIComponent(template.name)}`;
     window.open(url, '_blank');
   };
 

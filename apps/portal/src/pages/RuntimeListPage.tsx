@@ -37,6 +37,7 @@ import {
 import { FormDataList } from "@/components/FormDataList";
 import { FormRenderer } from "@/components/FormRenderer";
 import { WorkflowInstancePanel } from "@/components/WorkflowInstancePanel";
+import { PrintRecordModal } from "@/components/PrintRecordModal";
 import { IconSelector } from "@/components/IconSelector";
 import { renderIcon } from "@/utils/iconRenderer";
 import ReactECharts from "echarts-for-react";
@@ -80,6 +81,7 @@ import { formDefinitionApi } from "@/api/formDefinition";
 import type { FormDefinitionResponse } from "@/api/formDefinition";
 import { applicationApi } from "@/api/application";
 import { formDataApi } from "@/api/formData";
+import { workflowApi } from "@/api/workflow";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import dayjs from "dayjs";
@@ -256,6 +258,43 @@ export const RuntimeListPage = () => {
     enabled: !!viewingRecordId,
   });
   const effectiveFormId = selectedFormId || viewingRecord?.formId || "";
+
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+
+  // 查看/打印时按记录上的 formId 拉定义（避免未选中左侧表单时 selectedFormId 为空）
+  const { data: formDefinitionForEffective } = useQuery({
+    queryKey: ["formDefinition", effectiveFormId],
+    queryFn: () => formDefinitionApi.getById(effectiveFormId!),
+    enabled: !!effectiveFormId && (!!viewDrawerOpen || printModalOpen),
+  });
+
+  // 与 WorkflowInstancePanel 共用缓存：流程进行中时不显示「编辑」
+  const { data: workflowInstanceRaw } = useQuery({
+    queryKey: ["workflow-instance", viewingRecordId],
+    queryFn: () => workflowApi.getInstanceByRecord(viewingRecordId!),
+    enabled: !!viewingRecordId && viewDrawerOpen,
+    retry: false,
+  });
+  const workflowInstanceView = (workflowInstanceRaw as any)?.data ?? workflowInstanceRaw;
+  /** 运行中默认隐藏编辑；退回发起节点后仅发起人可改单再提，需显示「编辑」 */
+  const hideEditWhileWorkflowRunning = useMemo(() => {
+    const status = workflowInstanceView?.status;
+    if (status !== "running") return false;
+    const defNodes = (workflowInstanceView?.definition?.nodes || []) as { type?: string; nodeId?: string }[];
+    const startNodeId = defNodes.find((n) => n.type === "start")?.nodeId;
+    const atStartNode =
+      !!startNodeId && workflowInstanceView?.currentNodeId === startNodeId;
+    const startHist = (workflowInstanceView?.history || []).find((h: any) => h.type === "start");
+    const initiatorId = startHist?.userId
+      ? String(startHist.userId)
+      : viewingRecord?.submitterId != null
+        ? String(viewingRecord.submitterId)
+        : null;
+    const uid = user?.id != null ? String(user.id) : null;
+    const initiatorCanEdit = atStartNode && initiatorId && uid && initiatorId === uid;
+    if (initiatorCanEdit) return false;
+    return true;
+  }, [workflowInstanceView, viewingRecord, user]);
 
   // 获取应用信息
   const { data: appInfo } = useQuery({
@@ -2473,10 +2512,14 @@ export const RuntimeListPage = () => {
             )}
             </div>
         ) : selectedFormId ? (
-          <div style={{ padding: "24px", background: "#f5f5f5", flex: 1, display: "flex", flexDirection: "column", overflow: "visible", minHeight: 0, height: "100%" }}>
+          <div style={{ padding: "24px", background: "#f5f5f5", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, height: "100%" }}>
             <FormDataList
               formId={selectedFormId}
               formDefinition={formDefinition}
+              listWorkflowHoverEnabled={
+                (appInfo?.metadata as Record<string, unknown> | undefined)
+                  ?.listWorkflowHoverPreview === true
+              }
               onView={(recordId) => {
                 setViewingRecordId(recordId);
                 setViewDrawerOpen(true);
@@ -2552,6 +2595,7 @@ export const RuntimeListPage = () => {
         destroyOnClose
               extra={
                 <Space>
+                  {!hideEditWhileWorkflowRunning && (
                   <Button
               type="text"
                         icon={<EditOutlined />}
@@ -2565,11 +2609,16 @@ export const RuntimeListPage = () => {
             >
               编辑
                   </Button>
+                  )}
                   <Button
               type="text"
               icon={<PrinterOutlined />}
               onClick={() => {
-                message.info("打印功能待实现");
+                if (!effectiveFormId) {
+                  message.warning("无法确定表单，请稍后重试");
+                  return;
+                }
+                setPrintModalOpen(true);
               }}
             >
               打印
@@ -2629,6 +2678,18 @@ export const RuntimeListPage = () => {
           </>
               )}
       </ResizableDrawer>
+
+      <PrintRecordModal
+        open={printModalOpen}
+        onCancel={() => setPrintModalOpen(false)}
+        formId={effectiveFormId}
+        recordData={(viewingRecord?.data || {}) as Record<string, unknown>}
+        formFields={
+          (formDefinitionForEffective?.config?.fields ||
+            formDefinition?.config?.fields ||
+            []) as any[]
+        }
+      />
 
       {/* 修改基础信息模态框 */}
       <Modal

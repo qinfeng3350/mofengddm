@@ -24,5 +24,9 @@ export class RegisterDto {
 
   @IsString()
   phone?: string;
+
+  @IsString()
+  @IsNotEmpty({ message: '邀请码不能为空' })
+  inviteCode!: string;
 }
 

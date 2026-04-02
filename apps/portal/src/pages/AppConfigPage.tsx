@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Layout, Card, Typography, Space, Button, List, Input, Row, Col, Statistic, Divider, message, Popconfirm, Spin, Empty } from "antd";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Layout, Card, Typography, Space, Button, List, Input, Row, Col, Statistic, Divider, message, Popconfirm, Spin, Empty, Switch } from "antd";
 import {
   LeftOutlined,
   EditOutlined,
@@ -27,6 +27,7 @@ const { Title, Text } = Typography;
 export const AppConfigPage = () => {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [editingAppName, setEditingAppName] = useState(false);
   const [appNameValue, setAppNameValue] = useState("");
   const [activeMenu, setActiveMenu] = useState("基础信息");
@@ -255,6 +256,45 @@ export const AppConfigPage = () => {
                       </Text>
                     </div>
                   </div>
+                </Space>
+              </Card>
+
+              <Card title="列表与运行体验" style={{ marginBottom: 24 }}>
+                <Space
+                  align="start"
+                  style={{ justifyContent: "space-between", width: "100%" }}
+                >
+                  <div style={{ flex: 1, paddingRight: 16 }}>
+                    <Text strong>数据列表悬停显示流程状态</Text>
+                    <div style={{ marginTop: 6 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        开启后，鼠标悬停在数据列表某一行约半秒，会弹出简要流程信息（当前节点、是否拒绝等）；不挡点击与勾选。
+                      </Text>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={
+                      (appInfo.metadata as Record<string, unknown> | undefined)
+                        ?.listWorkflowHoverPreview === true
+                    }
+                    onChange={async (checked) => {
+                      if (!appId) return;
+                      try {
+                        await applicationApi.update(appId, {
+                          metadata: {
+                            ...(appInfo.metadata || {}),
+                            listWorkflowHoverPreview: checked,
+                          },
+                        });
+                        message.success(checked ? "已开启悬停流程提示" : "已关闭悬停流程提示");
+                        await queryClient.invalidateQueries({
+                          queryKey: ["application", appId],
+                        });
+                      } catch {
+                        message.error("保存失败，请重试");
+                      }
+                    }}
+                  />
                 </Space>
               </Card>
 

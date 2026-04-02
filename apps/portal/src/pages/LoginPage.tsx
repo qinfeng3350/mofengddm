@@ -36,8 +36,19 @@ export const LoginPage = () => {
       tenantId: sp.get("tenantId") || undefined,
       tenantCode: sp.get("tenantCode") || undefined,
       token: sp.get("token") || undefined,
+      inviteCode:
+        sp.get("inviteCode") || sp.get("invitationCode") || sp.get("invite") || undefined,
     };
   }, []);
+
+  // 注册入口默认关闭：仅当 URL 带邀请码时才允许注册页
+  const allowRegister = !!urlTenant.inviteCode;
+
+  useEffect(() => {
+    if (!allowRegister && activeTab === "register") {
+      setActiveTab("login");
+    }
+  }, [allowRegister, activeTab]);
 
   useEffect(() => {
     // 钉钉网页登录回调会把 token 带回到 /login?token=...
@@ -127,6 +138,7 @@ export const LoginPage = () => {
     name: string;
     email: string;
     phone?: string;
+    inviteCode: string;
   }) => {
     try {
       setLoading(true);
@@ -167,10 +179,14 @@ export const LoginPage = () => {
                 key: "login",
                 label: "登录",
               },
-              {
-                key: "register",
-                label: "注册",
-              },
+              ...(allowRegister
+                ? [
+                    {
+                      key: "register",
+                      label: "注册",
+                    },
+                  ]
+                : []),
             ]}
           />
 
@@ -242,6 +258,9 @@ export const LoginPage = () => {
               autoComplete="off"
               className="login-form"
               size="large"
+              initialValues={{
+                inviteCode: urlTenant.inviteCode || "",
+              }}
             >
               <Form.Item
                 name="account"
@@ -278,6 +297,17 @@ export const LoginPage = () => {
                 <Input
                   prefix={<MailOutlined />}
                   placeholder="邮箱"
+                  className="login-input"
+                />
+              </Form.Item>
+
+              <Form.Item
+                name="inviteCode"
+                rules={[{ required: true, message: "请输入邀请码" }]}
+              >
+                <Input
+                  prefix={<SafetyOutlined />}
+                  placeholder="邀请码"
                   className="login-input"
                 />
               </Form.Item>

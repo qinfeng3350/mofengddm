@@ -1,12 +1,24 @@
-import React, { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
-import { useDroppable } from "@dnd-kit/core";
-import { Input } from "antd";
+import React, {
+  forwardRef,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  applyPrintStyleToLuckysheetCell,
+  luckysheetCellToStyle,
+  type PrintCellStyle,
+} from "@/utils/printCellStyle";
 
 interface Cell {
   row: number;
   col: number;
   value: string;
   fieldId?: string; // 如果是字段，保存字段ID
+  style?: PrintCellStyle;
 }
 
 interface MergedCell {
@@ -22,6 +34,15 @@ interface SpreadsheetEditorProps {
   onCellChange?: (row: number, col: number, value: string) => void;
   onFieldDrop?: (row: number, col: number, fieldId: string, fieldLabel: string) => void;
   orientation?: "portrait" | "landscape";
+  /** 编辑模板时由父组件传入已保存的格子数据；revision 变化会重建 Luckysheet 并灌入（解决模板异步加载晚于首次初始化导致空白） */
+  bootstrapData?: {
+    cells?: Record<string, Cell>;
+    mergedCells?: MergedCell[];
+    columnWidths?: Record<number, number>;
+    rowHeights?: Record<number, number>;
+  } | null;
+  /** 与 bootstrapData 联动，如 `${id}:${updatedAt}` 或 `loading:${templateId}` */
+  bootstrapRevision?: string;
 }
 
 export interface SpreadsheetEditorRef {
@@ -31,6 +52,27 @@ export interface SpreadsheetEditorRef {
   getSelectedRange: () => { startRow: number; startCol: number; endRow: number; endCol: number } | null;
   startEditSelected: () => void;
   commitEditing: () => void;
+  undo: () => void;
+  redo: () => void;
+  toggleBold: () => void;
+  toggleItalic: () => void;
+  toggleUnderline: () => void;
+  toggleStrike: () => void;
+  alignHorizontal: (align: "left" | "center" | "right") => void;
+  alignVertical: (align: "top" | "middle" | "bottom") => void;
+  setFontFamily: (family: string) => void;
+  setFontSize: (size: number) => void;
+  setFontColor: (color: string) => void;
+  setCellBgColor: (color: string) => void;
+  /** 为当前选区设置全部边框（打印时会按 Luckysheet 边框导出） */
+  setSelectionBorderAll: () => void;
+  /** 清除当前选区边框 */
+  clearSelectionBorders: () => void;
+  insertSubtableBlock: (
+    subtableId: string,
+    subtableLabel: string,
+    columns: Array<{ fieldId: string; label: string }>,
+  ) => void;
   getAllData: () => {
     cells: Record<string, Cell>;
     mergedCells: MergedCell[];
@@ -51,915 +93,662 @@ const SpreadsheetEditorComponent = forwardRef<SpreadsheetEditorRef, SpreadsheetE
   onCellChange,
   onFieldDrop,
   orientation = "portrait",
+  bootstrapData,
+  bootstrapRevision = "default",
 }, ref) => {
-  const [cells, setCells] = useState<Record<string, Cell>>({});
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [selectedRange, setSelectedRange] = useState<{ startRow: number; startCol: number; endRow: number; endCol: number } | null>(null);
-  const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
-  const [editingValue, setEditingValue] = useState("");
-  const [mergedCells, setMergedCells] = useState<MergedCell[]>([]);
-  const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
-  const [rowHeights, setRowHeights] = useState<Record<number, number>>({});
-  const [resizingColumn, setResizingColumn] = useState<number | null>(null);
-  const [resizingRow, setResizingRow] = useState<number | null>(null);
-  const inputRef = useRef<any>(null);
+  const reactId = useId();
+  const containerId = useMemo(() => `luckysheet-${reactId.replace(/:/g, "_")}`, [reactId]);
+  const initializedRef = useRef(false);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [hostHeight, setHostHeight] = useState<number>(720);
+  const pendingDataRef = useRef<{
+    cells?: Record<string, Cell>;
+    mergedCells?: MergedCell[];
+    columnWidths?: Record<number, number>;
+    rowHeights?: Record<number, number>;
+  } | null>(null);
+  const bootstrapDataRef = useRef(bootstrapData);
+  bootstrapDataRef.current = bootstrapData;
+  const orientationRef = useRef(orientation);
+  orientationRef.current = orientation;
 
-  // 当进入编辑模式时，自动聚焦输入框
-  useEffect(() => {
-    if (editingCell && inputRef.current) {
-      // 使用 requestAnimationFrame 确保 DOM 已更新
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (inputRef.current) {
-            // Ant Design Input 组件的 ref 结构
-            const inputElement = (inputRef.current as any).input || inputRef.current;
-            if (inputElement) {
-              try {
-                inputElement.focus();
-                // 选中所有文本
-                if (typeof inputElement.select === "function") {
-                  inputElement.select();
-                } else if (typeof inputElement.setSelectionRange === "function") {
-                  inputElement.setSelectionRange(0, inputElement.value?.length || 0);
-                }
-              } catch (err) {
-                // 静默处理错误
-              }
-            }
-          }
-        });
-      });
-    }
-  }, [editingCell]);
+  const getLuckysheet = () => luckysheetRef.current ?? (window as any).luckysheet;
+  const luckysheetRef = useRef<any>(null);
+  const assetsReadyRef = useRef(false);
+  const [boundaryLeft, setBoundaryLeft] = useState<number | null>(null);
 
-  // 生成列标签 (A, B, C, ..., Z, AA, AB, ...)
-  const getColumnLabel = (col: number): string => {
-    let label = "";
-    let num = col;
-    while (num >= 0) {
-      label = String.fromCharCode(65 + (num % 26)) + label;
-      num = Math.floor(num / 26) - 1;
-    }
-    return label;
-  };
-
-  // 获取单元格键
-  const getCellKey = (row: number, col: number) => `${row}-${col}`;
-
-  // 获取单元格值
-  const getCellValue = (row: number, col: number): string => {
-    const key = getCellKey(row, col);
-    return cells[key]?.value || "";
-  };
-
-  // 检查单元格是否在合并区域内
-  const isCellMerged = (row: number, col: number): MergedCell | null => {
-    for (const merged of mergedCells) {
-      if (
-        row >= merged.startRow &&
-        row <= merged.endRow &&
-        col >= merged.startCol &&
-        col <= merged.endCol
-      ) {
-        return merged;
+  const callFirst = (names: string[], ...args: any[]) => {
+    const luckysheet = getLuckysheet();
+    if (!luckysheet) return;
+    for (const n of names) {
+      const fn = luckysheet?.[n];
+      if (typeof fn === "function") {
+        try {
+          fn(...args);
+          return;
+        } catch {
+          /* 尝试下一个同名兜底 API */
+        }
       }
+    }
+  };
+
+  /** 优先用 Luckysheet getRange()，避免 React state 未同步时合并只有 1×1 */
+  const getActiveRange = () => {
+    const luckysheet = getLuckysheet();
+    const fromApi = luckysheet?.getRange?.()?.[0];
+    if (
+      fromApi &&
+      Array.isArray(fromApi.row) &&
+      Array.isArray(fromApi.column) &&
+      fromApi.row.length >= 2 &&
+      fromApi.column.length >= 2
+    ) {
+      return {
+        startRow: fromApi.row[0],
+        endRow: fromApi.row[1],
+        startCol: fromApi.column[0],
+        endCol: fromApi.column[1],
+      };
+    }
+    if (selectedRange) return selectedRange;
+    const row = Number(luckysheet?.getCurrentRow?.());
+    const col = Number(luckysheet?.getCurrentColumn?.());
+    if (Number.isFinite(row) && Number.isFinite(col)) {
+      return { startRow: row, endRow: row, startCol: col, endCol: col };
     }
     return null;
   };
 
-  // 检查单元格是否是合并区域的起始单元格
-  const isMergedStartCell = (row: number, col: number): boolean => {
-    return mergedCells.some((m) => m.startRow === row && m.startCol === col);
-  };
+  /**
+   * setRangeMerge 内部会访问 data[r][c] 并赋值 cfg.merge[`${r}_${c}`]；
+   * create 后 data 可能缺行/缺列或 config.merge 非对象，会触发
+   * "Cannot set properties of undefined (setting '0_0')"。
+   */
+  const ensureLuckysheetGridForRange = (luckysheet: any, maxRow: number, maxCol: number) => {
+    const files = luckysheet.getLuckysheetfile?.();
+    const file = files?.[0];
+    if (!file) return;
 
-  // 检查单元格是否应该被隐藏（因为被合并了）
-  const isCellHidden = (row: number, col: number): boolean => {
-    const merged = isCellMerged(row, col);
-    if (!merged) return false;
-    return !(merged.startRow === row && merged.startCol === col);
-  };
-
-  // 处理单元格鼠标按下
-  const handleCellMouseDown = (row: number, col: number, e: React.MouseEvent) => {
-    // 只处理左键点击
-    if (e.button !== 0) return;
-    
-    // 如果点击的是输入框或调整手柄，不处理
-    const target = e.target as HTMLElement;
-    if (target.tagName === "INPUT" || target.closest("input") || target.classList.contains("resize-handle")) {
-      return;
+    if (!file.config || typeof file.config !== "object") {
+      file.config = {};
+    }
+    const mergeCfg = file.config.merge;
+    if (mergeCfg == null || typeof mergeCfg !== "object" || Array.isArray(mergeCfg)) {
+      file.config.merge = {};
     }
 
-    // 如果已经在编辑模式，不处理
-    if (editingCell?.row === row && editingCell?.col === col) {
-      return;
+    if (!Array.isArray(file.data)) {
+      file.data = [];
     }
-
-    // 简单设置选中状态，不阻止双击事件
-    // 注意：不要调用 e.preventDefault()，让浏览器能正常识别双击
-    if (e.shiftKey && selectedCell) {
-      // Shift + 点击：扩展选择范围
-      const startRow = Math.min(selectedCell.row, row);
-      const startCol = Math.min(selectedCell.col, col);
-      const endRow = Math.max(selectedCell.row, row);
-      const endCol = Math.max(selectedCell.col, col);
-      setSelectedRange({ startRow, startCol, endRow, endCol });
-    } else {
-      // 普通点击：只设置选中状态，不进入编辑模式
-      setSelectedCell({ row, col });
-      setSelectedRange({ startRow: row, startCol: col, endRow: row, endCol: col });
+    const data = file.data;
+    const minRows = Math.max(maxRow + 1, rows, data.length, 1);
+    const minCols = Math.max(maxCol + 1, cols, 1);
+    while (data.length < minRows) {
+      data.push([]);
     }
-  };
-
-  // 处理单元格鼠标移动（已移除拖拽选择功能）
-  const handleCellMouseMove = (row: number, col: number, e?: React.MouseEvent) => {
-    // 不再处理拖拽选择
-  };
-
-  // 处理单元格鼠标释放
-  const handleCellMouseUp = () => {
-    // 不再需要处理
-  };
-
-  // 处理单元格点击
-  const handleCellClick = (row: number, col: number, e?: React.MouseEvent) => {
-    // 如果点击的是输入框或调整手柄，不处理
-    if (e) {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.closest("input") || target.classList.contains("resize-handle")) {
-        return;
+    for (let r = 0; r < minRows; r += 1) {
+      if (!Array.isArray(data[r])) {
+        data[r] = [];
       }
-      
-      // 检查是否是双击（e.detail === 2 表示双击），让双击事件处理
-      if (e.detail >= 2) {
-        return;
+      const rowArr = data[r];
+      while (rowArr.length < minCols) {
+        rowArr.push(null);
       }
     }
-    
-    // 如果已经在编辑模式，不处理点击
-    if (editingCell?.row === row && editingCell?.col === col) {
-      return;
-    }
-    
-    // 只设置选中状态，不进入编辑模式（双击才进入编辑模式）
-    setSelectedCell({ row, col });
-    setSelectedRange({ startRow: row, startCol: col, endRow: row, endCol: col });
   };
 
-  // 处理单元格编辑完成
-  const handleCellBlur = () => {
-    if (editingCell) {
-      const { row, col } = editingCell;
-      const key = getCellKey(row, col);
-      setCells((prev) => ({
-        ...prev,
-        [key]: { row, col, value: editingValue },
-      }));
-      onCellChange?.(row, col, editingValue);
-      setEditingCell(null);
-    }
-  };
+  const mergeSelection = () => {
+    const luckysheet = getLuckysheet();
+    const range = getActiveRange();
+    if (!luckysheet || !range) return;
+    if (range.startRow === range.endRow && range.startCol === range.endCol) return;
 
-  // 处理单元格输入（直接输入，不需要双击）
-  const handleCellKeyDown = (row: number, col: number, e: React.KeyboardEvent) => {
-    // 如果已经在编辑模式，不处理
-    if (editingCell?.row === row && editingCell?.col === col) {
-      return;
-    }
-    
-    // 如果按下的是可打印字符，直接进入编辑模式
-    const isPrintable = e.key.length === 1 && 
-      !e.ctrlKey && 
-      !e.metaKey && 
-      !e.altKey && 
-      e.key !== "Enter" &&
-      e.key !== "Tab" &&
-      e.key !== "Escape" &&
-      e.key !== "ArrowUp" &&
-      e.key !== "ArrowDown" &&
-      e.key !== "ArrowLeft" &&
-      e.key !== "ArrowRight";
-    
-    if (isPrintable) {
-      e.preventDefault();
-      e.stopPropagation();
-      setEditingCell({ row, col });
-      setEditingValue(e.key);
-      setSelectedCell({ row, col });
-      setSelectedRange({ startRow: row, startCol: col, endRow: row, endCol: col });
-    } else if (e.key === "F2" || (e.key === "Enter" && !e.shiftKey)) {
-      // F2 或 Enter 进入编辑模式
-      e.preventDefault();
-      e.stopPropagation();
-      const value = getCellValue(row, col);
-      setEditingCell({ row, col });
-      setEditingValue(value);
+    const rc = {
+      row: [range.startRow, range.endRow] as [number, number],
+      column: [range.startCol, range.endCol] as [number, number],
+    };
+
+    ensureLuckysheetGridForRange(luckysheet, range.endRow, range.endCol);
+
+    // 文档：先设选区再 setRangeMerge("all")；setting.range 为 { row, column }
+    luckysheet.setRangeShow?.(rc);
+    const merge = luckysheet.setRangeMerge?.bind(luckysheet);
+    if (typeof merge !== "function") return;
+    const mergeOpts = { range: rc, order: 0 };
+    try {
+      merge("all", mergeOpts);
+      luckysheet.refresh?.();
+    } catch {
+      try {
+        merge("all");
+        luckysheet.refresh?.();
+      } catch (e) {
+        console.warn("luckysheet merge failed", e);
+      }
     }
   };
 
-  // 获取列宽
-  const getColumnWidth = (col: number): number => {
-    return columnWidths[col] || 80;
-  };
+  const unmergeSelection = () => {
+    const luckysheet = getLuckysheet();
+    const range = getActiveRange();
+    if (!luckysheet || !range) return;
 
-  // 获取行高
-  const getRowHeight = (row: number): number => {
-    return rowHeights[row] || 25;
-  };
-
-  // 处理列宽调整
-  const handleColumnResizeStart = (col: number, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setResizingColumn(col);
-    const startX = e.clientX;
-    const startWidth = getColumnWidth(col);
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const diff = moveEvent.clientX - startX;
-      const newWidth = Math.max(50, startWidth + diff);
-      setColumnWidths((prev) => ({ ...prev, [col]: newWidth }));
+    const rc = {
+      row: [range.startRow, range.endRow] as [number, number],
+      column: [range.startCol, range.endCol] as [number, number],
     };
 
-    const handleMouseUp = () => {
-      setResizingColumn(null);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    ensureLuckysheetGridForRange(luckysheet, range.endRow, range.endCol);
+    luckysheet.setRangeShow?.(rc);
+    // cancelRangeMerge 只有可选 setting，禁止传入 "all" 作为首参（会坏掉拆区）
+    try {
+      luckysheet.cancelRangeMerge?.({ range: rc, order: 0 });
+      luckysheet.refresh?.();
+    } catch {
+      try {
+        luckysheet.cancelRangeMerge?.();
+        luckysheet.refresh?.();
+      } catch (e) {
+        console.warn("luckysheet cancelRangeMerge failed", e);
+      }
+    }
   };
 
-  // 处理行高调整
-  const handleRowResizeStart = (row: number, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setResizingRow(row);
-    const startY = e.clientY;
-    const startHeight = getRowHeight(row);
+  const applyStyleToSelection = (
+    updater: (cell: Record<string, any>) => Record<string, any>,
+  ) => {
+    const luckysheet = getLuckysheet();
+    const range = getActiveRange();
+    if (!luckysheet || !range) return;
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const diff = moveEvent.clientY - startY;
-      const newHeight = Math.max(20, startHeight + diff);
-      setRowHeights((prev) => ({ ...prev, [row]: newHeight }));
-    };
+    const sheets = luckysheet.getLuckysheetfile?.() || [];
+    const sheet = sheets?.[0] || {};
+    const matrix = (sheet.data || []) as any[][];
 
-    const handleMouseUp = () => {
-      setResizingRow(null);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    for (let r = range.startRow; r <= range.endRow; r += 1) {
+      for (let c = range.startCol; c <= range.endCol; c += 1) {
+        const current = (matrix?.[r]?.[c] || {}) as Record<string, any>;
+        const nextCell = updater({ ...current });
+        luckysheet.setCellValue?.(r, c, nextCell);
+      }
+    }
   };
 
-  // 处理字段拖拽到单元格（从外部调用）
-  const insertField = (row: number, col: number, fieldId: string, fieldLabel: string) => {
-    const key = getCellKey(row, col);
-    const fieldValue = `\${${fieldLabel}}`;
-    setCells((prev) => ({
-      ...prev,
-      [key]: { row, col, value: fieldValue, fieldId },
-    }));
-    onFieldDrop?.(row, col, fieldId, fieldLabel);
-    setSelectedCell({ row, col });
+  const recalcBoundary = () => {
+    const luckysheet = getLuckysheet();
+    const host = hostRef.current;
+    if (!luckysheet || !host) return;
+
+    const sheet = luckysheet.getLuckysheetfile?.()?.[0];
+    const columnlen = sheet?.config?.columnlen || {};
+    const defaultWidth = 73;
+    const boundaryCol = orientationRef.current === "portrait" ? 8 : 12;
+    let left = 0;
+    for (let c = 0; c < boundaryCol; c += 1) {
+      left += Number(columnlen[c] ?? defaultWidth);
+    }
+    setBoundaryLeft(Math.max(0, left));
   };
 
-  // 外部触发编辑当前选中单元格
-  const startEditSelected = () => {
-    const target =
-      selectedCell ??
-      (selectedRange
-        ? { row: selectedRange.startRow, col: selectedRange.startCol }
-        : null);
-    if (!target) return;
-    const value = getCellValue(target.row, target.col);
-    setEditingCell({ row: target.row, col: target.col });
-    setEditingValue(value);
-    setSelectedCell({ row: target.row, col: target.col });
-    setSelectedRange({
-      startRow: target.row,
-      startCol: target.col,
-      endRow: target.row,
-      endCol: target.col,
+  /** Luckysheet 在 create 后异步量宽，立刻 recalc 常为 0；延后一帧并 resize 再算纸宽边界 */
+  const scheduleRecalcBoundary = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const luckysheet = getLuckysheet();
+        if (!luckysheet || !hostRef.current) return;
+        luckysheet.resize?.();
+        recalcBoundary();
+      });
     });
   };
 
-  // 提交当前编辑中的值（用于保存/预览前确保落盘）
-  const commitEditing = () => {
-    if (!editingCell) return;
-    handleCellBlur();
+  const loadScript = (src: string) =>
+    new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector<HTMLScriptElement>(`script[data-lucky-src="${src}"]`);
+      if (existing) {
+        if ((existing as any).__loaded) return resolve();
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => reject(new Error(`Failed to load ${src}`)), { once: true });
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = false; // keep order
+      s.defer = false;
+      s.dataset.luckySrc = src;
+      s.addEventListener("load", () => {
+        (s as any).__loaded = true;
+        resolve();
+      });
+      s.addEventListener("error", () => reject(new Error(`Failed to load ${src}`)));
+      document.head.appendChild(s);
+    });
+
+  const loadStyle = (href: string) =>
+    new Promise<void>((resolve) => {
+      const existing = document.querySelector<HTMLLinkElement>(`link[data-lucky-href="${href}"]`);
+      if (existing) return resolve();
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.dataset.luckyHref = href;
+      link.addEventListener("load", () => resolve(), { once: true });
+      link.addEventListener("error", () => resolve(), { once: true });
+      document.head.appendChild(link);
+    });
+
+  const ensureLuckysheetAssets = async () => {
+    if (assetsReadyRef.current) return;
+
+    // Use static assets under `public/vendor` to avoid Vite module wrapping.
+    // Order matters: jquery -> plugin.js -> luckysheet.umd.js
+    await loadStyle("/vendor/luckysheet/plugins/css/pluginsCss.css");
+    await loadStyle("/vendor/luckysheet/plugins/plugins.css");
+    await loadStyle("/vendor/luckysheet/css/luckysheet.css");
+    await loadStyle("/vendor/luckysheet/assets/iconfont/iconfont.css");
+
+    await loadScript("/vendor/jquery.min.js");
+    await loadScript("/vendor/luckysheet/plugins/js/plugin.js");
+    await loadScript("/vendor/luckysheet/luckysheet.umd.js");
+
+    luckysheetRef.current = (window as any).luckysheet;
+    assetsReadyRef.current = true;
   };
 
-  // 导出当前全部数据，供父组件保存/预览
-  const getAllData = () => {
-    return {
-      cells,
-      mergedCells,
-      columnWidths,
-      rowHeights,
-    };
+  const extractData = (): {
+    cells: Record<string, Cell>;
+    mergedCells: MergedCell[];
+    columnWidths: Record<number, number>;
+    rowHeights: Record<number, number>;
+  } => {
+    const luckysheet = getLuckysheet();
+    if (!luckysheet) {
+      return { cells: {}, mergedCells: [], columnWidths: {}, rowHeights: {} };
+    }
+
+    const sheets = luckysheet.getLuckysheetfile?.() || [];
+    const sheet = sheets?.[0] || {};
+    const cells: Record<string, Cell> = {};
+    const mergedCells: MergedCell[] = [];
+    const columnWidths: Record<number, number> = sheet?.config?.columnlen || {};
+    const rowHeights: Record<number, number> = sheet?.config?.rowlen || {};
+
+    const matrix = Array.isArray(sheet?.data) ? sheet.data : [];
+    matrix.forEach((rowArr: any[], rowIndex: number) => {
+      if (!Array.isArray(rowArr)) return;
+      rowArr.forEach((cellData: any, colIndex: number) => {
+        const mc = cellData?.mc;
+        if (mc && typeof mc.r === "number" && typeof mc.c === "number") {
+          if (mc.r !== rowIndex || mc.c !== colIndex) return;
+        }
+        const rawVal = cellData?.m ?? cellData?.v ?? "";
+        const value = String(rawVal ?? "");
+        const style = luckysheetCellToStyle(cellData);
+        if (value === "" && !style) return;
+        const key = `${rowIndex}-${colIndex}`;
+        cells[key] = {
+          row: rowIndex,
+          col: colIndex,
+          value,
+          ...(style ? { style } : {}),
+        };
+      });
+    });
+
+    const mergeMap = sheet?.config?.merge || {};
+    Object.values(mergeMap).forEach((m: any) => {
+      if (typeof m?.r !== "number" || typeof m?.c !== "number") return;
+      mergedCells.push({
+        startRow: m.r,
+        startCol: m.c,
+        endRow: m.r + (m.rs || 1) - 1,
+        endCol: m.c + (m.cs || 1) - 1,
+      });
+    });
+
+    return { cells, mergedCells, columnWidths, rowHeights };
   };
 
-  // 从父组件设置数据，常用于编辑/回显
-  const setData = (data: {
+  const initLuckysheet = (data?: {
     cells?: Record<string, Cell>;
     mergedCells?: MergedCell[];
     columnWidths?: Record<number, number>;
     rowHeights?: Record<number, number>;
   }) => {
-    setCells(data.cells || {});
-    setMergedCells(data.mergedCells || []);
-    setColumnWidths(data.columnWidths || {});
-    setRowHeights(data.rowHeights || {});
-    setSelectedCell(null);
-    setSelectedRange(null);
-    setEditingCell(null);
-    setEditingValue("");
-  };
+    const luckysheet = getLuckysheet();
+    if (!luckysheet) return;
 
-  // 合并单元格
-  const mergeCells = () => {
-    if (!selectedRange) return;
-    const { startRow, startCol, endRow, endCol } = selectedRange;
-    
-    // 检查是否已经合并
-    const existingMerge = mergedCells.find(
-      (m) =>
-        m.startRow === startRow &&
-        m.startCol === startCol &&
-        m.endRow === endRow &&
-        m.endCol === endCol
-    );
-    if (existingMerge) return;
-
-    // 检查是否与现有合并区域冲突
-    const hasConflict = mergedCells.some((m) => {
-      for (let r = startRow; r <= endRow; r++) {
-        for (let c = startCol; c <= endCol; c++) {
+    luckysheet.destroy?.();
+    const persisted = data;
+    luckysheet.create({
+      container: containerId,
+      lang: "zh",
+      showtoolbar: false,
+      showinfobar: false,
+      showsheetbar: false,
+      row: rows,
+      column: cols,
+      hook: {
+        cellUpdated: (r: number, c: number, value: any) => {
+          onCellChange?.(r, c, String(value ?? ""));
+        },
+        rangeSelect: (_sheet: any, range: any) => {
+          const picked = Array.isArray(range) ? range[0] : range;
           if (
-            r >= m.startRow &&
-            r <= m.endRow &&
-            c >= m.startCol &&
-            c <= m.endCol &&
-            !(m.startRow === startRow && m.startCol === startCol)
+            picked &&
+            Array.isArray(picked.row) &&
+            Array.isArray(picked.column) &&
+            picked.row.length >= 2 &&
+            picked.column.length >= 2
           ) {
-            return true;
+            setSelectedRange({
+              startRow: picked.row[0],
+              endRow: picked.row[1],
+              startCol: picked.column[0],
+              endCol: picked.column[1],
+            });
+          }
+        },
+      },
+      success: () => {
+        const sheet0 = luckysheet.getLuckysheetfile?.()?.[0];
+        if (sheet0) {
+          if (!sheet0.config || typeof sheet0.config !== "object") {
+            sheet0.config = {};
+          }
+          const mc = sheet0.config.merge;
+          if (mc == null || typeof mc !== "object" || Array.isArray(mc)) {
+            sheet0.config.merge = {};
           }
         }
-      }
-      return false;
-    });
-    if (hasConflict) return;
 
-    // 合并：将范围内的所有单元格的值合并到起始单元格
-    const startKey = getCellKey(startRow, startCol);
-    let mergedValue = cells[startKey]?.value || "";
-    
-    // 收集所有非空单元格的值
-    const values: string[] = [];
-    for (let r = startRow; r <= endRow; r++) {
-      for (let c = startCol; c <= endCol; c++) {
-        const key = getCellKey(r, c);
-        const cellValue = cells[key]?.value || "";
-        if (cellValue && !values.includes(cellValue)) {
-          values.push(cellValue);
-        }
-      }
-    }
-    if (values.length > 0) {
-      mergedValue = values.join(" ");
-    }
+        // Apply persisted data after base workbook is created.
+        // Passing a custom `data` sheet object is brittle across Luckysheet builds and can
+        // break rendering (e.g. internal `config` undefined). Incremental application is stable.
+        const sourceCells = persisted?.cells || {};
+        let maxCellR = 0;
+        let maxCellC = 0;
+        Object.keys(sourceCells).forEach((key) => {
+          const [a, b] = key.split("-");
+          const r = Number(a);
+          const c = Number(b);
+          if (Number.isFinite(r)) maxCellR = Math.max(maxCellR, r);
+          if (Number.isFinite(c)) maxCellC = Math.max(maxCellC, c);
+        });
+        (persisted?.mergedCells || []).forEach((m) => {
+          maxCellR = Math.max(maxCellR, m.endRow);
+          maxCellC = Math.max(maxCellC, m.endCol);
+        });
+        ensureLuckysheetGridForRange(luckysheet, maxCellR, maxCellC);
 
-    // 更新单元格值
-    setCells((prev) => ({
-      ...prev,
-      [startKey]: { row: startRow, col: startCol, value: mergedValue },
-    }));
-
-    // 添加合并区域
-    setMergedCells((prev) => [
-      ...prev,
-      { startRow, startCol, endRow, endCol },
-    ]);
-  };
-
-  // 取消合并单元格
-  const unmergeCells = () => {
-    if (!selectedRange) return;
-    const { startRow, startCol, endRow, endCol } = selectedRange;
-
-    // 找到并移除包含选中范围的合并区域
-    setMergedCells((prev) =>
-      prev.filter(
-        (m) =>
-          !(
-            startRow >= m.startRow &&
-            endRow <= m.endRow &&
-            startCol >= m.startCol &&
-            endCol <= m.endCol
-          )
-      )
-    );
-  };
-
-  // 获取选中的范围
-  const getSelectedRange = () => {
-    return selectedRange;
-  };
-
-  // 暴露方法给父组件
-  useImperativeHandle(ref, () => ({
-    insertField,
-    mergeCells,
-    unmergeCells,
-    getSelectedRange,
-    startEditSelected,
-    commitEditing,
-    getAllData,
-    setData,
-  }));
-
-  // 已移除全局鼠标事件处理（不再需要拖拽选择功能）
-
-  // 计算打印边界（根据纸张方向）
-  const printBoundaryCol = orientation === "portrait" ? 8 : 12; // 纵向8列，横向12列
-
-  // 单元格组件
-  const CellComponent: React.FC<{ row: number; col: number }> = ({ row, col }) => {
-    const cellKey = getCellKey(row, col);
-    const cell = cells[cellKey];
-    const value = cell?.value || "";
-    const isSelected = selectedCell?.row === row && selectedCell?.col === col;
-    const isEditing = editingCell?.row === row && editingCell?.col === col;
-    const isPrintBoundary = col === printBoundaryCol;
-    const isNonPrintable = col >= printBoundaryCol;
-    const merged = isCellMerged(row, col);
-    const isHidden = isCellHidden(row, col);
-    const isStartCell = isMergedStartCell(row, col);
-    const tdRef = useRef<HTMLTableCellElement>(null);
-
-    // 使用原生 DOM 事件监听器处理双击，确保不被 React 事件系统或 DndContext 干扰
-    useEffect(() => {
-      const tdElement = tdRef.current;
-      if (!tdElement) return;
-
-      const handleNativeDoubleClick = (e: MouseEvent) => {
-        console.log("原生双击事件触发", { row, col });
-        
-        // 如果点击的是输入框，不处理
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.closest("input")) {
-          console.log("点击的是输入框，不处理");
-          return;
-        }
-
-        // 阻止事件冒泡
-        e.stopPropagation();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-
-        // 清除所有可能的 blur 定时器
-        document.querySelectorAll("input").forEach((input) => {
-          const blurTimer = (input as any).__blurTimer;
-          if (blurTimer) {
-            clearTimeout(blurTimer);
-            delete (input as any).__blurTimer;
-          }
+        Object.entries(sourceCells).forEach(([key, cell]) => {
+          const [rStr, cStr] = key.split("-");
+          const r = Number(rStr);
+          const c = Number(cStr);
+          const value = String(cell?.value ?? "");
+          const style = cell?.style;
+          if (!Number.isFinite(r) || !Number.isFinite(c)) return;
+          if (value === "" && !style) return;
+          const pkg: Record<string, any> = { v: value, m: value };
+          applyPrintStyleToLuckysheetCell(pkg, style);
+          luckysheet.setCellValue?.(r, c, pkg);
         });
 
-        // 直接进入编辑模式
-        const cellKey = `${row}-${col}`;
-        const currentValue = cells[cellKey]?.value || "";
-        
-        console.log("进入编辑模式", { row, col, currentValue });
-        
-        // 立即设置状态
-        setEditingCell({ row, col });
-        setEditingValue(currentValue);
-        setSelectedCell({ row, col });
-        setSelectedRange({ startRow: row, startCol: col, endRow: row, endCol: col });
-      };
+        const merges = persisted?.mergedCells || [];
+        merges.forEach((m) => {
+          luckysheet.setRangeMerge?.("all", {
+            range: { row: [m.startRow, m.endRow], column: [m.startCol, m.endCol] },
+          });
+        });
 
-      // 添加原生双击事件监听器，使用捕获阶段确保优先处理
-      tdElement.addEventListener("dblclick", handleNativeDoubleClick, true);
+        const columnWidths = persisted?.columnWidths || {};
+        Object.entries(columnWidths).forEach(([cStr, w]) => {
+          const c = Number(cStr);
+          if (!Number.isFinite(c)) return;
+          (luckysheet as any).setColumnWidth?.(c, Number(w));
+        });
 
-      return () => {
-        tdElement.removeEventListener("dblclick", handleNativeDoubleClick, true);
-      };
-    }, [row, col, cells, setEditingCell, setEditingValue, setSelectedCell, setSelectedRange]);
+        const rowHeights = persisted?.rowHeights || {};
+        Object.entries(rowHeights).forEach(([rStr, h]) => {
+          const r = Number(rStr);
+          if (!Number.isFinite(r)) return;
+          (luckysheet as any).setRowHeight?.(r, Number(h));
+        });
 
-    // 处理双击事件（React 事件，作为备用）
-    const handleDoubleClick = (e: React.MouseEvent) => {
-      console.log("双击事件触发", { row, col });
-      
-      // 如果点击的是输入框，不处理
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.closest("input")) {
-        console.log("点击的是输入框，不处理");
-        return;
-      }
-      
-      // 阻止事件冒泡到 DndContext 和其他事件处理器
-      e.stopPropagation();
-      e.preventDefault();
-      if (e.nativeEvent.stopImmediatePropagation) {
-        e.nativeEvent.stopImmediatePropagation();
-      }
-
-      // 清除所有可能的 blur 定时器
-      document.querySelectorAll("input").forEach((input) => {
-        const blurTimer = (input as any).__blurTimer;
-        if (blurTimer) {
-          clearTimeout(blurTimer);
-          delete (input as any).__blurTimer;
-        }
-      });
-
-      // 如果已经在编辑模式，不处理
-      if (editingCell?.row === row && editingCell?.col === col) {
-        console.log("已经在编辑模式");
-        return;
-      }
-
-      // 直接进入编辑模式
-      const cellKey = `${row}-${col}`;
-      const currentValue = cells[cellKey]?.value || "";
-      
-      console.log("进入编辑模式", { row, col, currentValue });
-      
-      // 立即设置状态
-      setEditingCell({ row, col });
-      setEditingValue(currentValue);
-      setSelectedCell({ row, col });
-      setSelectedRange({ startRow: row, startCol: col, endRow: row, endCol: col });
-    };
-
-    // 如果是被隐藏的合并单元格，不渲染
-    if (isHidden) {
-      return null;
-    }
-
-    // 计算 rowSpan 和 colSpan
-    const rowSpan = merged ? merged.endRow - merged.startRow + 1 : 1;
-    const colSpan = merged ? merged.endCol - merged.startCol + 1 : 1;
-
-    // 获取合并区域的显示值（使用起始单元格的值）
-    const displayValue = merged
-      ? getCellValue(merged.startRow, merged.startCol)
-      : value;
-
-    const { setNodeRef, isOver } = useDroppable({
-      id: `cell-${row}-${col}`,
-      data: {
-        type: "cell",
-        row,
-        col,
+        luckysheet.refresh?.();
+        scheduleRecalcBoundary();
       },
     });
+  };
 
-    // 双击事件已由原生事件监听器处理（在 useEffect 中）
+  // Ensure container has a concrete pixel height for canvas layout
+  useEffect(() => {
+    const node = hostRef.current;
+    const parent = node?.parentElement;
+    if (!node || !parent) return;
 
-    // 合并 refs
-    const combinedRef = (node: HTMLTableCellElement | null) => {
-      setNodeRef(node);
-      tdRef.current = node;
+    const compute = () => {
+      const h = parent.clientHeight;
+      if (h > 0) {
+        const next = Math.max(520, h);
+        setHostHeight((prev) => (prev === next ? prev : next));
+      }
     };
 
-    return (
-      <td
-        ref={combinedRef}
-        data-row={row}
-        data-col={col}
-        rowSpan={rowSpan > 1 ? rowSpan : undefined}
-        colSpan={colSpan > 1 ? colSpan : undefined}
-        style={{
-          minWidth: getColumnWidth(col),
-          width: getColumnWidth(col),
-          height: getRowHeight(row),
-          minHeight: getRowHeight(row),
-          border: "1px solid #d9d9d9",
-          padding: 0,
-          position: "relative",
-          backgroundColor: isNonPrintable ? "#f5f5f5" : "#fff",
-          borderLeft: isPrintBoundary ? "2px dashed #1890ff" : "1px solid #d9d9d9",
-          borderRight: "1px solid #d9d9d9",
-          borderTop: "1px solid #d9d9d9",
-          borderBottom: "1px solid #d9d9d9",
-          pointerEvents: "auto", // 确保可以接收点击事件
-          cursor: "cell", // 显示单元格光标
-        }}
-        onMouseDown={(e) => {
-          // 如果是双击的第一次点击，不处理，让双击事件能正常触发
-          if (e.detail >= 2) {
-            return;
-          }
-          // 不阻止默认行为，让双击事件能正常触发
-          // 不调用 stopPropagation，让事件正常传播，以便字段拖拽能正常工作
-          handleCellMouseDown(row, col, e);
-        }}
-        onMouseMove={(e) => handleCellMouseMove(row, col, e)}
-        onMouseUp={handleCellMouseUp}
-        onClick={(e) => {
-          // 如果是双击（detail >= 2），不处理单击事件，让双击事件处理
-          if (e.detail >= 2) {
-            console.log("onClick: 检测到双击，跳过处理");
-            return;
-          }
-          handleCellClick(row, col, e);
-        }}
-        onDoubleClick={(e) => {
-          console.log("onDoubleClick 被调用", { row, col });
-          // 双击事件 - 直接处理
-          e.stopPropagation();
-          e.preventDefault();
-          if (e.nativeEvent.stopImmediatePropagation) {
-            e.nativeEvent.stopImmediatePropagation();
-          }
-          handleDoubleClick(e);
-        }}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          handleCellKeyDown(row, col, e);
-        }}
-        tabIndex={0}
-        onFocus={() => {
-          setSelectedCell({ row, col });
-          setSelectedRange({ startRow: row, startCol: col, endRow: row, endCol: col });
-        }}
-      >
-        {(editingCell?.row === row && editingCell?.col === col) ? (
-          <Input
-            ref={(ref) => {
-              inputRef.current = ref;
-              // 确保 ref 设置后立即聚焦
-              if (ref) {
-                setTimeout(() => {
-                  const inputElement = (ref as any).input || ref;
-                  if (inputElement) {
-                    inputElement.focus();
-                    inputElement.select();
-                  }
-                }, 0);
-              }
-            }}
-            value={editingValue}
-            onChange={(e) => {
-              setEditingValue(e.target.value);
-            }}
-            onBlur={(e) => {
-              // 延迟处理 blur，避免与双击事件冲突
-              const relatedTarget = e.relatedTarget as HTMLElement;
-              const isClickingCell = relatedTarget?.closest("td[data-row]");
-              
-              if (isClickingCell) {
-                // 如果点击的是另一个单元格，延迟处理，给双击事件留出时间
-                const blurTimer = setTimeout(() => {
-                  // 再次检查是否还在编辑模式（可能被双击事件取消了）
-                  if (editingCell?.row === row && editingCell?.col === col) {
-                    handleCellBlur();
-                  }
-                }, 200);
-                // 存储 timer 以便双击时清除
-                (e.currentTarget as any).__blurTimer = blurTimer;
-              } else {
-                // 如果不是点击单元格，立即处理
-                handleCellBlur();
-              }
-            }}
-            onPressEnter={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              handleCellBlur();
-            }}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setEditingCell(null);
-                setEditingValue("");
-              }
-            }}
-            style={{
-              width: "100%",
-              height: "100%",
-              border: "none",
-              padding: "2px 4px",
-              fontSize: 12,
-              outline: "none",
-              userSelect: "text",
-              pointerEvents: "auto",
-            }}
-            autoFocus
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              // 允许输入框内的点击，选中所有文本
-              if (inputRef.current) {
-                const inputElement = (inputRef.current as any).input || inputRef.current;
-                if (inputElement && typeof inputElement.select === "function") {
-                  setTimeout(() => {
-                    inputElement.select();
-                  }, 0);
-                }
-              }
-            }}
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              // 阻止单元格的 mousedown 事件，但允许输入框内的操作
-            }}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              // 清除 blur 定时器，防止双击时输入框被关闭
-              const blurTimer = (e.currentTarget as any).__blurTimer;
-              if (blurTimer) {
-                clearTimeout(blurTimer);
-                delete (e.currentTarget as any).__blurTimer;
-              }
-              // 选中所有文本
-              if (inputRef.current) {
-                const inputElement = (inputRef.current as any).input || inputRef.current;
-                if (inputElement && typeof inputElement.select === "function") {
-                  setTimeout(() => {
-                    inputElement.select();
-                  }, 0);
-                }
-              }
-            }}
-          />
-        ) : (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              padding: "2px 4px",
-              fontSize: 12,
-              cursor: "cell",
-              backgroundColor: isSelected ? "#bae7ff" : "transparent",
-              border: isSelected ? "2px solid #1890ff" : "none",
-              display: "flex",
-              alignItems: "center",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: merged && rowSpan > 1 ? "normal" : "nowrap",
-              minHeight: merged ? `${rowSpan * 25}px` : "25px",
-              pointerEvents: "none", // 让点击事件穿透到 td，确保双击事件能正确触发
-            }}
-          >
-            {displayValue}
-          </div>
-        )}
-        {isOver && (
+    compute();
+
+    const ro = new ResizeObserver(() => {
+      compute();
+    });
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, []);
+
+  // Only trigger Luckysheet resize on height change (do NOT recreate workbook)
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    const luckysheet = getLuckysheet();
+    luckysheet?.resize?.();
+    scheduleRecalcBoundary();
+  }, [hostHeight]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      await ensureLuckysheetAssets();
+      if (cancelled) return;
+
+      const empty = {
+        cells: {} as Record<string, Cell>,
+        mergedCells: [] as MergedCell[],
+        columnWidths: {} as Record<number, number>,
+        rowHeights: {} as Record<number, number>,
+      };
+
+      const b = bootstrapDataRef.current;
+      if (b != null) {
+        pendingDataRef.current = {
+          cells: b.cells || {},
+          mergedCells: b.mergedCells || [],
+          columnWidths: b.columnWidths || {},
+          rowHeights: b.rowHeights || {},
+        };
+      } else {
+        pendingDataRef.current = pendingDataRef.current ?? empty;
+      }
+
+      initLuckysheet(pendingDataRef.current);
+      initializedRef.current = true;
+      scheduleRecalcBoundary();
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+      const luckysheet = getLuckysheet();
+      luckysheet?.destroy?.();
+      initializedRef.current = false;
+      pendingDataRef.current = null;
+    };
+  }, [containerId, rows, cols, orientation, bootstrapRevision]);
+
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    scheduleRecalcBoundary();
+  }, [orientation, selectedRange]);
+
+  useImperativeHandle(ref, () => ({
+    insertField: (row, col, fieldId, fieldLabel) => {
+      const luckysheet = getLuckysheet();
+      if (!luckysheet) return;
+      const fieldValue = `\${${fieldLabel}}`;
+      luckysheet.setCellValue?.(row, col, fieldValue);
+      onFieldDrop?.(row, col, fieldId, fieldLabel);
+      setSelectedRange({ startRow: row, endRow: row, startCol: col, endCol: col });
+    },
+    mergeCells: () => mergeSelection(),
+    unmergeCells: () => unmergeSelection(),
+    getSelectedRange: () => selectedRange,
+    startEditSelected: () => {
+      const luckysheet = getLuckysheet();
+      luckysheet?.enterEditMode?.();
+    },
+    commitEditing: () => {
+      const luckysheet = getLuckysheet();
+      luckysheet?.exitEditMode?.();
+    },
+    undo: () => callFirst(["undo", "doUndo"]),
+    redo: () => callFirst(["redo", "doRedo"]),
+    toggleBold: () =>
+      applyStyleToSelection((cell) => ({ ...cell, bl: cell.bl ? 0 : 1 })),
+    toggleItalic: () =>
+      applyStyleToSelection((cell) => ({ ...cell, it: cell.it ? 0 : 1 })),
+    toggleUnderline: () =>
+      applyStyleToSelection((cell) => ({ ...cell, un: cell.un ? 0 : 1 })),
+    toggleStrike: () =>
+      applyStyleToSelection((cell) => ({ ...cell, cl: cell.cl ? 0 : 1 })),
+    alignHorizontal: (align) =>
+      applyStyleToSelection((cell) => ({
+        ...cell,
+        ht: align === "center" ? 0 : align === "left" ? 1 : 2,
+      })),
+    alignVertical: (align) =>
+      applyStyleToSelection((cell) => ({
+        ...cell,
+        vt: align === "middle" ? 0 : align === "top" ? 1 : 2,
+      })),
+    setFontFamily: (family) =>
+      applyStyleToSelection((cell) => ({ ...cell, ff: family })),
+    setFontSize: (size) =>
+      applyStyleToSelection((cell) => ({ ...cell, fs: size })),
+    setFontColor: (color) =>
+      applyStyleToSelection((cell) => ({ ...cell, fc: color })),
+    setCellBgColor: (color) =>
+      applyStyleToSelection((cell) => ({ ...cell, bg: color })),
+    setSelectionBorderAll: () => {
+      const luckysheet = getLuckysheet();
+      const range = getActiveRange();
+      if (!luckysheet || !range) return;
+      luckysheet.setRangeFormat?.(
+        "bd",
+        { borderType: "border-all", style: "1", color: "#000000" },
+        {
+          range: {
+            row: [range.startRow, range.endRow],
+            column: [range.startCol, range.endCol],
+          },
+        },
+      );
+    },
+    clearSelectionBorders: () => {
+      const luckysheet = getLuckysheet();
+      const range = getActiveRange();
+      if (!luckysheet || !range) return;
+      luckysheet.setRangeFormat?.(
+        "bd",
+        { borderType: "border-none", style: "1", color: "#000000" },
+        {
+          range: {
+            row: [range.startRow, range.endRow],
+            column: [range.startCol, range.endCol],
+          },
+        },
+      );
+    },
+    insertSubtableBlock: (subtableId, subtableLabel, columns) => {
+      const luckysheet = getLuckysheet();
+      const start = getActiveRange();
+      if (!luckysheet || !start) return;
+
+      const baseRow = start.startRow;
+      const baseCol = start.startCol;
+
+      // Row 1: header (bold + centered)
+      luckysheet.setCellValue?.(baseRow, baseCol, { v: subtableLabel, m: subtableLabel, bl: 1 });
+      for (let i = 0; i < columns.length; i += 1) {
+        const col = columns[i];
+        const header = String(col.label || col.fieldId);
+        const r = baseRow;
+        const c = baseCol + i;
+        luckysheet.setCellValue?.(r, c, { v: header, m: header, bl: 1, ht: 0, vt: 0 });
+      }
+
+      // Row 2: placeholders for one detail row (engine can later loop)
+      for (let i = 0; i < columns.length; i += 1) {
+        const col = columns[i];
+        const token = `\${${subtableId}.${col.fieldId}}`;
+        const r = baseRow + 1;
+        const c = baseCol + i;
+        luckysheet.setCellValue?.(r, c, { v: token, m: token });
+      }
+    },
+    getAllData: () => extractData(),
+    setData: (data) => {
+      pendingDataRef.current = data;
+      if (!initializedRef.current) return;
+      initLuckysheet(data);
+      scheduleRecalcBoundary();
+    },
+  }));
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: hostHeight, minHeight: 560 }}>
+      <div
+        ref={hostRef}
+        id={containerId}
+        style={{ width: "100%", height: "100%", minHeight: 560 }}
+      />
+      {/* 竖版/横版均显示可打印区边界；z-index 需高于 Luckysheet 画布层 */}
+      {boundaryLeft != null && (
+        <>
           <div
             style={{
               position: "absolute",
               top: 0,
-              left: 0,
-              right: 0,
               bottom: 0,
-              backgroundColor: "rgba(24, 144, 255, 0.1)",
-              border: "2px dashed #1890ff",
-              zIndex: 1,
+              left: boundaryLeft,
+              width: 0,
+              borderLeft: "2px dashed #1677ff",
+              pointerEvents: "none",
+              zIndex: 10002,
             }}
           />
-        )}
-      </td>
-    );
-  };
-
-  return (
-    <div style={{ width: "100%", height: "100%", overflow: "auto" }}>
-      <table
-        style={{
-          borderCollapse: "collapse",
-          width: "100%",
-          userSelect: "none",
-        }}
-        onDoubleClick={(e) => {
-          // 如果双击的是表格本身（不是单元格），不处理
-          if ((e.target as HTMLElement).tagName === "TABLE") {
-            return;
-          }
-        }}
-      >
-        {/* 列标题行 */}
-        <thead>
-          <tr>
-            <th
-              style={{
-                width: 50,
-                minWidth: 50,
-                border: "1px solid #d9d9d9",
-                backgroundColor: "#fafafa",
-                textAlign: "center",
-                fontSize: 12,
-                fontWeight: "normal",
-              }}
-            />
-            {Array.from({ length: cols }, (_, i) => (
-              <th
-                key={i}
-                style={{
-                  minWidth: getColumnWidth(i),
-                  width: getColumnWidth(i),
-                  border: "1px solid #d9d9d9",
-                  textAlign: "center",
-                  fontSize: 12,
-                  fontWeight: "normal",
-                  borderLeft: i === printBoundaryCol ? "2px dashed #1890ff" : "1px solid #d9d9d9",
-                  backgroundColor: i >= printBoundaryCol ? "#f5f5f5" : "#fafafa",
-                  position: "relative",
-                  userSelect: "none",
-                }}
-              >
-                {getColumnLabel(i)}
-                {/* 列宽调整手柄 */}
-                <div
-                  className="resize-handle"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    right: -3,
-                    width: 6,
-                    height: "100%",
-                    cursor: "col-resize",
-                    zIndex: 10,
-                    backgroundColor: resizingColumn === i ? "#1890ff" : "transparent",
-                  }}
-                  onMouseDown={(e) => handleColumnResizeStart(i, e)}
-                />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: rows }, (_, rowIndex) => (
-            <tr key={rowIndex} style={{ height: getRowHeight(rowIndex) }}>
-              {/* 行号 */}
-              <td
-                style={{
-                  width: 50,
-                  minWidth: 50,
-                  height: getRowHeight(rowIndex),
-                  border: "1px solid #d9d9d9",
-                  backgroundColor: "#fafafa",
-                  textAlign: "center",
-                  fontSize: 12,
-                  color: "#666",
-                  position: "relative",
-                  userSelect: "none",
-                }}
-              >
-                {rowIndex + 1}
-                {/* 行高调整手柄 */}
-                <div
-                  className="resize-handle"
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    bottom: -3,
-                    width: "100%",
-                    height: 6,
-                    cursor: "row-resize",
-                    zIndex: 10,
-                    backgroundColor: resizingRow === rowIndex ? "#1890ff" : "transparent",
-                  }}
-                  onMouseDown={(e) => handleRowResizeStart(rowIndex, e)}
-                />
-              </td>
-              {/* 单元格 */}
-              {Array.from({ length: cols }, (_, colIndex) => {
-                // 如果单元格被隐藏（在合并区域内但不是起始单元格），跳过渲染
-                if (isCellHidden(rowIndex, colIndex)) {
-                  return null;
-                }
-                return <CellComponent key={colIndex} row={rowIndex} col={colIndex} />;
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {/* 非打印区域提示 */}
-      {cols > printBoundaryCol && (
-        <div
-          style={{
-            position: "absolute",
-            right: 16,
-            top: "50%",
-            transform: "translateY(-50%)",
-            padding: "8px 12px",
-            backgroundColor: "#f5f5f5",
-            border: "1px solid #d9d9d9",
-            borderRadius: 4,
-            fontSize: 12,
-            color: "#999",
-          }}
-        >
-          灰色区域不可打印
-        </div>
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: boundaryLeft + 2,
+              right: 0,
+              background: "rgba(0,0,0,0.03)",
+              pointerEvents: "none",
+              zIndex: 10001,
+            }}
+          />
+        </>
       )}
     </div>
   );

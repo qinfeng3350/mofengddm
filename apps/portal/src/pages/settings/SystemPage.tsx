@@ -3,6 +3,7 @@ import { SettingOutlined, DatabaseOutlined, BellOutlined, SecurityScanOutlined, 
 import { AmapKeyManagementPage } from "./AmapKeyManagementPage";
 import { DingtalkIntegrationPage } from "./DingtalkIntegrationPage";
 import { UserManagementPage } from "./UserManagementPage";
+import { TenantBasicInfoTab } from "./TenantBasicInfoTab";
 import "./SettingsPage.css";
 
 const { Title } = Typography;
@@ -17,7 +18,7 @@ export const SystemPage = () => {
         </span>
       ),
       key: "basic",
-      children: <p>系统基础配置</p>,
+      children: <TenantBasicInfoTab />,
     },
     {
       label: (

@@ -16,6 +16,8 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
 import { DingtalkModule } from './modules/dingtalk/dingtalk.module';
 import { DepartmentModule } from './modules/department/department.module';
 import { OperationLogModule } from './modules/operation-log/operation-log.module';
+import { TenantMetricsModule } from './modules/tenant-metrics/tenant-metrics.module';
+import { UploadModule } from './modules/upload/upload.module';
 import {
   TenantEntity,
   UserEntity,
@@ -99,6 +101,8 @@ import {
     DingtalkModule,
     DepartmentModule,
     OperationLogModule,
+    TenantMetricsModule,
+    UploadModule,
   ],
   controllers: [AppController],
   providers: [AppService],

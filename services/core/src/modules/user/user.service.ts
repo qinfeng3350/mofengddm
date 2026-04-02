@@ -1,20 +1,28 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity } from '../../database/entities/user.entity';
+import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    private readonly tenantLimits: TenantLimitsService,
   ) {}
 
-  async findAll(tenantId?: string): Promise<UserEntity[]> {
+  async findAll(tenantId?: string, includeDisabled = false): Promise<UserEntity[]> {
     const queryBuilder = this.userRepository.createQueryBuilder('user');
-    
-    queryBuilder.where('user.status = :status', { status: 1 });
-    
+
+    if (!includeDisabled) {
+      queryBuilder.where('user.status = :status', { status: 1 });
+    }
+
     if (tenantId) {
       queryBuilder.andWhere('user.tenantId = :tenantId', { tenantId });
     }
@@ -32,6 +40,7 @@ export class UserService {
         'user.jobNumber',
         'user.departmentId',
         'user.tenantId',
+        'user.status',
         'department.id',
         'department.name',
       ])
@@ -59,11 +68,17 @@ export class UserService {
     });
   }
 
-  async search(keyword: string, tenantId?: string): Promise<UserEntity[]> {
+  async search(
+    keyword: string,
+    tenantId?: string,
+    includeDisabled = false,
+  ): Promise<UserEntity[]> {
     const queryBuilder = this.userRepository.createQueryBuilder('user');
-    
-    queryBuilder.where('user.status = :status', { status: 1 });
-    
+
+    if (!includeDisabled) {
+      queryBuilder.where('user.status = :status', { status: 1 });
+    }
+
     if (tenantId) {
       queryBuilder.andWhere('user.tenantId = :tenantId', { tenantId });
     }
@@ -86,12 +101,34 @@ export class UserService {
         'user.jobNumber',
         'user.departmentId',
         'user.tenantId',
+        'user.status',
         'department.id',
         'department.name',
       ])
       .orderBy('user.name', 'ASC');
     
     return queryBuilder.getMany();
+  }
+
+  async setStatusForTenant(
+    userId: string,
+    tenantId: string,
+    status: number,
+  ): Promise<UserEntity> {
+    if (status !== 0 && status !== 1) {
+      throw new BadRequestException('status 只能为 0（停用）或 1（启用）');
+    }
+    const user = await this.userRepository.findOne({
+      where: { id: userId, tenantId },
+    });
+    if (!user) {
+      throw new NotFoundException('用户不存在');
+    }
+    if (status === 1) {
+      await this.tenantLimits.assertCanEnableUser(tenantId, user.status);
+    }
+    user.status = status;
+    return this.userRepository.save(user);
   }
 }
 

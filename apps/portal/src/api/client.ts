@@ -13,6 +13,9 @@ export const apiClient = axios.create({
 // 请求拦截器：添加token
 apiClient.interceptors.request.use(
   (config) => {
+    if (config.data instanceof FormData) {
+      delete (config.headers as Record<string, unknown>)["Content-Type"];
+    }
     const token = localStorage.getItem("auth-storage");
     if (token) {
       try {
@@ -34,7 +37,6 @@ apiClient.interceptors.request.use(
 // 响应拦截器
 apiClient.interceptors.response.use(
   (response) => {
-    console.log("[API Client] 响应成功:", response.config.url, response.data);
     return response.data;
   },
   (error) => {
