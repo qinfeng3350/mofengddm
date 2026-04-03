@@ -12,6 +12,9 @@ import {
   Modal,
   Drawer,
   Checkbox,
+  Radio,
+  Input,
+  Select,
   Empty,
   Table,
   Pagination,
@@ -170,9 +173,95 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   const [operationRecordVisible, setOperationRecordVisible] = useState(false);
   // 字段显示设置
   const [displaySettingsVisible, setDisplaySettingsVisible] = useState(false);
-  // 顶部数据范围（全部数据/其它视图）
-  const [dataScope, setDataScope] = useState<string>("全部数据");
+  // 新建视图弹窗
+  const [viewCreateModalOpen, setViewCreateModalOpen] = useState(false);
+  const [viewCreateName, setViewCreateName] = useState<string>("未命名表格视图");
+  const [viewCreateActiveTab, setViewCreateActiveTab] = useState<
+    "filter" | "fieldVisibility" | "customButton" | "mobilePreview"
+  >("filter");
+  const [viewCreateFilterType, setViewCreateFilterType] = useState<"all" | "custom">("all");
+  const [viewCreateFilterConditions, setViewCreateFilterConditions] = useState<
+    Array<{
+      fieldId: string;
+      operator: string;
+      value: string;
+    }>
+  >([]);
 
+  type ViewFilterCondition = { fieldId: string; operator: string; value: string };
+  type FormViewConfig = {
+    id: string;
+    name: string;
+    type: "all" | "custom";
+    filterConditions: ViewFilterCondition[];
+  };
+
+  const defaultFormView: FormViewConfig = { id: "all", name: "全部数据", type: "all", filterConditions: [] };
+  const [viewList, setViewList] = useState<FormViewConfig[]>([defaultFormView]);
+  const [selectedViewId, setSelectedViewId] = useState<string>(defaultFormView.id);
+
+  const handleDeleteView = (viewId: string) => {
+    if (!formId) return;
+    if (viewId === "all") return;
+    const target = viewList.find((v) => v.id === viewId);
+    if (!target) return;
+
+    Modal.confirm({
+      title: `删除视图 "${target.name}"？`,
+      content: "删除后该视图将从下拉中移除，无法恢复。",
+      okText: "删除",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: () => {
+        const customViewsOnly = viewList.filter((v) => v.id !== "all" && v.id !== viewId);
+        setViewList([defaultFormView, ...customViewsOnly]);
+
+        const nextSelectedId = selectedViewId === viewId ? defaultFormView.id : selectedViewId;
+        setSelectedViewId(nextSelectedId);
+
+        try {
+          localStorage.setItem(`formViews_${formId}`, JSON.stringify(customViewsOnly));
+          localStorage.setItem(`formViewSelected_${formId}`, nextSelectedId);
+        } catch {
+          /* ignore */
+        }
+
+        message.success(`视图 "${target.name}" 已删除`);
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (!formId) return;
+    try {
+      const raw = localStorage.getItem(`formViews_${formId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const customViews: FormViewConfig[] = Array.isArray(parsed)
+        ? parsed
+            .map((v: any) => ({
+              id: String(v.id),
+              name: String(v.name || "未命名表格视图"),
+              type: v.type === "custom" ? "custom" : "all",
+              filterConditions: Array.isArray(v.filterConditions) ? v.filterConditions : [],
+            }))
+            .filter((v: FormViewConfig) => v.id && v.id !== "all")
+        : [];
+
+      setViewList([defaultFormView, ...customViews]);
+
+      // 默认永远选中“全部数据”
+      // 之前如果保存过自定义视图，会导致刷新后默认落到“新建的视图”
+      setSelectedViewId(defaultFormView.id);
+    } catch (e) {
+      // ignore corrupted localStorage
+      setViewList([defaultFormView]);
+      setSelectedViewId(defaultFormView.id);
+    }
+  }, [formId]);
+
+  const selectedView = useMemo(() => {
+    return viewList.find((v) => v.id === selectedViewId) || defaultFormView;
+  }, [viewList, selectedViewId]);
   // 选中行
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   // 锁定列 key 列表
@@ -288,6 +377,117 @@ export const FormDataList: React.FC<FormDataListProps> = ({
       };
     });
   }, [formDefinition]);
+
+  // 新建视图：按条件过滤时可拖拽的字段集合
+  const viewCreateFilterFields = useMemo(() => {
+    return (allFieldsList || []).filter(
+      (f: any) => f && f.fieldId && f.type !== "button" && f.type !== "subtable",
+    );
+  }, [allFieldsList]);
+
+  // 选中“按条件过滤”后自动初始化一条条件：不需要用户点击“添加条件”
+  useEffect(() => {
+    if (viewCreateFilterType !== "custom") return;
+    if (viewCreateFilterConditions.length > 0) return;
+    const first = viewCreateFilterFields[0];
+    if (!first?.fieldId) return;
+    setViewCreateFilterConditions([{ fieldId: first.fieldId, operator: "eq", value: "" }]);
+  }, [viewCreateFilterType, viewCreateFilterConditions.length, viewCreateFilterFields]);
+
+  const viewCreateFilterOperatorOptions = useMemo(
+    () => [
+      { value: "eq", label: "等于" },
+      { value: "ne", label: "不等于" },
+      { value: "gt", label: "大于" },
+      { value: "gte", label: "大于等于" },
+      { value: "lt", label: "小于" },
+      { value: "lte", label: "小于等于" },
+      { value: "contains", label: "包含" },
+      { value: "notContains", label: "不包含" },
+    ],
+    [],
+  );
+
+  const viewCreateFilterFieldOptions = useMemo(
+    () =>
+      viewCreateFilterFields.map((f: any) => ({
+        value: f.fieldId,
+        label: f.label || f.fieldName || f.fieldId,
+      })),
+    [viewCreateFilterFields],
+  );
+
+  const renderViewCreateFilterValueInput = (field: any, conditionIndex: number) => {
+    const v = viewCreateFilterConditions[conditionIndex]?.value || "";
+    const updateValue = (next: string) => {
+      setViewCreateFilterConditions((prev) =>
+        prev.map((c, cIdx) => (cIdx === conditionIndex ? { ...c, value: next } : c)),
+      );
+    };
+
+    if (
+      (field?.type === "select" ||
+        field?.type === "radio" ||
+        field?.type === "checkbox" ||
+        field?.type === "multiselect") &&
+      Array.isArray(field?.options) &&
+      field.options.length
+    ) {
+      const opts = field.options.map((opt: any) => ({
+        label: opt.label,
+        value: String(opt.value),
+      }));
+      const isMulti = field.type === "multiselect" || field.type === "checkbox";
+      return (
+        <Select
+          mode={isMulti ? "multiple" : undefined}
+          placeholder="请选择"
+          options={opts}
+          allowClear
+          size="small"
+          style={{ flex: 1 }}
+          value={
+            isMulti
+              ? (typeof v === "string" ? v.split(",").filter(Boolean) : [])
+              : v
+          }
+          onChange={(next) => {
+            const str = isMulti ? (next || []).join(",") : String(next ?? "");
+            updateValue(str);
+          }}
+        />
+      );
+    }
+
+    if (field?.type === "boolean") {
+      return (
+        <Select
+          placeholder="请选择"
+          allowClear
+          size="small"
+          style={{ flex: 1 }}
+          value={v}
+          options={[
+            { label: "是", value: "true" },
+            { label: "否", value: "false" },
+          ]}
+          onChange={(next) => {
+            updateValue(String(next ?? ""));
+          }}
+        />
+      );
+    }
+
+    return (
+      <Input
+        placeholder="请输入"
+        size="small"
+        style={{ flex: 1 }}
+        value={v}
+        onChange={(e) => updateValue(e.target.value)}
+      />
+    );
+  };
 
   // 计算「显示设置」里用到的所有字段 key（包含子表子字段）
   const getAllDisplayFieldKeys = useCallback((fields: any[]): string[] => {
@@ -524,6 +724,62 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     });
   }, [data]);
 
+  // 按“视图配置”做前端过滤（目前只支持简单 operator/value）
+  const viewFilteredRowData = useMemo(() => {
+    if (!selectedView || selectedView.type === "all" || !selectedView.filterConditions?.length) {
+      return rowData;
+    }
+
+    const normalize = (v: any) => {
+      if (v === null || v === undefined) return "";
+      if (Array.isArray(v)) return v.join(",");
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    };
+
+    const toNumber = (v: any) => {
+      const n = typeof v === "number" ? v : Number(String(v).trim());
+      return Number.isFinite(n) ? n : NaN;
+    };
+
+    const evalOne = (record: any, cond: ViewFilterCondition) => {
+      const raw = record?.[cond.fieldId];
+      const condVal = String(cond.value ?? "").trim();
+      if (!condVal) return true; // 值为空：不影响结果（避免把筛选配置写死成无数据）
+
+      switch (cond.operator) {
+        case "eq": {
+          return normalize(raw) === condVal;
+        }
+        case "ne": {
+          return normalize(raw) !== condVal;
+        }
+        case "gt": {
+          return toNumber(raw) > toNumber(condVal);
+        }
+        case "gte": {
+          return toNumber(raw) >= toNumber(condVal);
+        }
+        case "lt": {
+          return toNumber(raw) < toNumber(condVal);
+        }
+        case "lte": {
+          return toNumber(raw) <= toNumber(condVal);
+        }
+        case "contains": {
+          return normalize(raw).includes(condVal);
+        }
+        case "notContains": {
+          return !normalize(raw).includes(condVal);
+        }
+        default:
+          return true;
+      }
+    };
+
+    return rowData.filter((record) => selectedView.filterConditions.every((c) => evalOne(record, c)));
+  }, [rowData, selectedView]);
+
   // 分页
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -539,13 +795,13 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   useEffect(() => {
     // 数据变化时重置到第一页
     setCurrentPage(1);
-  }, [rowData.length]);
+  }, [viewFilteredRowData.length]);
 
   const pagedRowData = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     const end = start + pageSize;
-    return rowData.slice(start, end);
-  }, [rowData, currentPage, pageSize]);
+    return viewFilteredRowData.slice(start, end);
+  }, [viewFilteredRowData, currentPage, pageSize]);
 
   useEffect(() => {
     const onResize = () => {
@@ -788,6 +1044,23 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           </div>
         </div>
       );
+      const wrapMedia = (content: React.ReactNode) => (
+        <div>
+          <div className={`${styles.h3TgCell} ${styles.runtime}`}>{content}</div>
+        </div>
+      );
+
+      const formatNumberWithThousands = (raw: any) => {
+        if (raw === null || raw === undefined || raw === "") return "-";
+        const s = String(raw);
+        const cleaned = s.replace(/,/g, "");
+        if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return s;
+        const [i, d] = cleaned.split(".");
+        const sign = i.startsWith("-") ? "-" : "";
+        const intPart = sign ? i.slice(1) : i;
+        const withComma = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        return d != null && d !== "" ? `${sign}${withComma}.${d}` : `${sign}${withComma}`;
+      };
 
       // 关联表单字段特殊处理
       if (field?.type === "relatedForm" || field?.type === "relatedFormMulti") {
@@ -914,15 +1187,28 @@ export const FormDataList: React.FC<FormDataListProps> = ({
         return wrap(String(value));
       }
 
+      // 数字字段/公式字段：千位符格式化
+      // 公式字段也可能返回数字（例如 CONCAT/SUM 的结果），同样按 numberFormat.thousandSeparator 展示
+      if (field?.type === "number" || field?.type === "formula") {
+        const text = formatNumberWithThousands(value);
+        return wrap(text);
+      }
+
+      // 是/否（布尔）
+      if (field?.type === "boolean") {
+        if (value === null || value === undefined || value === "") return wrap("-");
+        const on =
+          value === true ||
+          value === "true" ||
+          value === 1 ||
+          value === "1";
+        return wrap(on ? "是" : "否");
+      }
+
       // 附件/图片：antd Upload 存对象或 fileList，禁止 String(obj) 成 [object Object]
       if (field?.type === "attachment") {
         const urls = extractAttachmentPreviewUrls(value);
         if (!urls.length) return wrap("-");
-        const wrapMedia = (content: React.ReactNode) => (
-          <div>
-            <div className={`${styles.h3TgCell} ${styles.runtime}`}>{content}</div>
-          </div>
-        );
         return wrapMedia(
           <span
             style={{
@@ -951,6 +1237,36 @@ export const FormDataList: React.FC<FormDataListProps> = ({
             ) : null}
           </span>
         );
+      }
+
+      // 手写签名：data URL / http(s) 显示缩略图（列表页实际走此组件，非 FormDataListTable）
+      {
+        const strVal = typeof value === "string" ? value.trim() : "";
+        const isSigField =
+          field?.type === "signature" || field?.label?.includes?.("手写签名");
+        const isDataImage = strVal.startsWith("data:image");
+        const isHttpImage =
+          isSigField && /^https?:\/\//i.test(strVal);
+        if (isSigField || isDataImage) {
+          if (!strVal) return wrap("-");
+          if (isDataImage || isHttpImage) {
+            return wrapMedia(
+              <img
+                src={strVal}
+                alt=""
+                style={{
+                  maxHeight: 44,
+                  maxWidth: 120,
+                  objectFit: "contain",
+                  verticalAlign: "middle",
+                  borderRadius: 4,
+                  border: "1px solid #f0f0f0",
+                }}
+              />,
+            );
+          }
+          return wrap(strVal);
+        }
       }
 
       if (Array.isArray(value)) {
@@ -1075,12 +1391,30 @@ export const FormDataList: React.FC<FormDataListProps> = ({
                             ? v.name || v.label || JSON.stringify(v)
                             : v ?? "-";
 
+                        const subSigStr = typeof v === "string" ? v.trim() : "";
+                        const subIsSig =
+                          sub.type === "signature" || sub.label?.includes?.("手写签名");
+                        const subShowSigImg =
+                          subSigStr.startsWith("data:image") ||
+                          (subIsSig && /^https?:\/\//i.test(subSigStr));
+
                         return (
                           <div key={i} className={styles.subtableRow}>
                             <div className={styles.h3TgCell}>
                               <div className={styles.runtime}>
                                 {isRelatedFormSubField ? (
                                   <RelatedFormFieldDisplay field={sub} value={v} />
+                                ) : subShowSigImg ? (
+                                  <img
+                                    src={subSigStr}
+                                    alt=""
+                                    style={{
+                                      maxHeight: 32,
+                                      maxWidth: 72,
+                                      objectFit: "contain",
+                                      verticalAlign: "middle",
+                                    }}
+                                  />
                                 ) : (
                                   <span>{text}</span>
                                 )}
@@ -1135,6 +1469,12 @@ export const FormDataList: React.FC<FormDataListProps> = ({
             aVal = aVal ? new Date(aVal).getTime() : 0;
             bVal = bVal ? new Date(bVal).getTime() : 0;
             return aVal - bVal;
+          } else if (fieldType === "boolean") {
+            const ta =
+              aVal === true || aVal === "true" || aVal === 1 || aVal === "1" ? 1 : 0;
+            const tb =
+              bVal === true || bVal === "true" || bVal === 1 || bVal === "1" ? 1 : 0;
+            return ta - tb;
           } else {
             aVal = String(aVal || '').toLowerCase();
             bVal = String(bVal || '').toLowerCase();
@@ -1235,44 +1575,69 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           flexShrink: 0,
         }}
       >
-        {/* 第一排：表单名称 + 视图筛选 */}
+        {/* 第一排：仅表单标题 */}
+        <div style={{ marginBottom: 8 }}>
+          <Typography.Text strong style={{ fontSize: 16 }}>
+            {formDefinition?.formName || "未命名表单"}
+          </Typography.Text>
+        </div>
+
+        {/* 第二排：视图筛选 + 新建视图 */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
             marginBottom: 12,
-            justifyContent: "space-between",
+            justifyContent: "flex-start",
           }}
         >
           <Space size={12}>
-            <Typography.Text strong style={{ fontSize: 16 }}>
-              {formDefinition?.formName || "未命名表单"}
-            </Typography.Text>
-
             <Dropdown
               menu={{
                 items: [
                   {
-                    key: "全部数据",
+                    key: "all",
                     label: "全部数据",
-                    onClick: () => setDataScope("全部数据"),
+                    onClick: () => setSelectedViewId("all"),
                   },
-                  {
-                    key: "我的数据",
-                    label: "我的数据",
-                    onClick: () => setDataScope("我的数据"),
-                  },
-                  {
-                    key: "我部门数据",
-                    label: "我部门数据",
-                    onClick: () => setDataScope("我部门数据"),
-                  },
+                  ...viewList
+                    .filter((v) => v.id !== "all")
+                    .map((v) => ({
+                      key: v.id,
+                      label: (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            maxWidth: 260,
+                          }}
+                        >
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {v.name}
+                          </span>
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDeleteView(v.id);
+                            }}
+                          />
+                        </div>
+                      ),
+                      onClick: () => setSelectedViewId(v.id),
+                    })),
                 ],
               }}
               trigger={["click"]}
             >
-              <Tag color="default" style={{ cursor: "pointer", userSelect: "none" }}>
-                {dataScope} <DownOutlined style={{ fontSize: 10, marginLeft: 4 }} />
+              <Tag color="blue" style={{ cursor: "pointer", userSelect: "none" }}>
+                {selectedView.name} <DownOutlined style={{ fontSize: 10, marginLeft: 4 }} />
               </Tag>
             </Dropdown>
 
@@ -1280,91 +1645,18 @@ export const FormDataList: React.FC<FormDataListProps> = ({
               type="link"
               style={{ padding: 0 }}
               onClick={() => {
-                if (!selectedRowKeys.length) {
-                  message.warning("请先勾选要提交的数据");
-                  return;
-                }
-
-                Modal.confirm({
-                  title: "确认提交",
-                  content: `将提交选中的 ${selectedRowKeys.length} 条数据，提交后将进入已提交状态。`,
-                  okText: "提交",
-                  cancelText: "取消",
-                  onOk: async () => {
-                    try {
-                      // 逐条提交（后端通过 POST /form-data + recordId 走更新逻辑）
-                      for (const recordId of selectedRowKeys) {
-                        const record = rowData.find((r: any) => (r.recordId || r.id) === recordId);
-                        if (!record) continue;
-                        await formDataApi.submit({
-                          formId,
-                          recordId,
-                          data: record.data || {},
-                          status: "submitted",
-                        });
-                      }
-                      message.success("提交成功");
-                      setSelectedRowKeys([]);
-                      refetch();
-                    } catch (e: any) {
-                      message.error(e?.message || "提交失败");
-                    }
-                  },
-                });
+                setViewCreateActiveTab("filter");
+                setViewCreateFilterType("all");
+                setViewCreateName("未命名表格视图");
+                setViewCreateModalOpen(true);
               }}
-            >
-              表单提交
-            </Button>
-
-            <Button
-              type="link"
-              style={{ padding: 0 }}
-              onClick={() => message.info("新建视图：待接入视图管理")}
             >
               新建视图
             </Button>
-
-            <Dropdown
-              menu={{
-                items: [
-                  {
-                    key: "全部",
-                    label: "全部",
-                    onClick: () => onFilterChange?.("全部"),
-                  },
-                  {
-                    key: "我部门的",
-                    label: "我部门的",
-                    onClick: () => onFilterChange?.("我部门的"),
-                  },
-                  {
-                    key: "我的",
-                    label: "我的",
-                    onClick: () => onFilterChange?.("我的"),
-                  },
-                  { type: "divider" },
-                  {
-                    key: "管理",
-                    label: (
-                      <Space>
-                        <SettingOutlined style={{ color: "#1890ff" }} />
-                        <span style={{ color: "#1890ff" }}>管理</span>
-                      </Space>
-                    ),
-                    onClick: () => onManageFilters?.(),
-                  },
-                ],
-              }}
-              trigger={["click"]}
-            >
-              <Tag color="blue" style={{ cursor: "pointer", userSelect: "none" }}>
-                {selectedFilter} <DownOutlined style={{ fontSize: 10, marginLeft: 4 }} />
-              </Tag>
-            </Dropdown>
           </Space>
         </div>
 
-        {/* 第二排：按钮区 */}
+        {/* 第三排：按钮区 */}
         <div
           style={{
             display: "flex",
@@ -1864,6 +2156,254 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           </div>
         </div>
       </Drawer>
+
+      {/* 新建视图弹窗 */}
+      <Modal
+        title={
+          <Input
+            value={viewCreateName}
+            onChange={(e) => setViewCreateName(e.target.value)}
+            style={{ width: "320px" }}
+          />
+        }
+        open={viewCreateModalOpen}
+        onCancel={() => setViewCreateModalOpen(false)}
+        width={860}
+        destroyOnClose
+        footer={[
+          <Button key="cancel" onClick={() => setViewCreateModalOpen(false)}>
+            取消
+          </Button>,
+          <Button
+            key="ok"
+            type="primary"
+            onClick={() => {
+              if (!formId) return;
+              const nextName = String(viewCreateName || "").trim() || "未命名表格视图";
+              const nextId = `view_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+              const type: "all" | "custom" = viewCreateFilterType === "all" ? "all" : "custom";
+              const conditions: ViewFilterCondition[] =
+                type === "all" ? [] : viewCreateFilterConditions || [];
+
+              const nextView: FormViewConfig = {
+                id: nextId,
+                name: nextName,
+                type,
+                filterConditions: conditions,
+              };
+
+              const customViewsOnly = [
+                ...viewList.filter((v) => v.id !== "all"),
+                nextView,
+              ];
+              setViewList([defaultFormView, ...customViewsOnly]);
+              // 新建视图后不自动切换当前下拉：默认保持“全部数据”
+              setSelectedViewId(defaultFormView.id);
+
+              try {
+                localStorage.setItem(`formViews_${formId}`, JSON.stringify(customViewsOnly));
+                localStorage.setItem(`formViewSelected_${formId}`, defaultFormView.id);
+              } catch {
+                /* ignore */
+              }
+
+              setViewCreateModalOpen(false);
+              message.success(`视图 "${nextName}" 已保存`);
+            }}
+          >
+            确定
+          </Button>,
+        ]}
+      >
+        <div style={{ display: "flex", gap: 16, minHeight: 420 }}>
+          <div
+            style={{
+              width: 210,
+              borderRight: "1px solid #f0f0f0",
+              paddingRight: 12,
+            }}
+          >
+            {[
+              { key: "filter", label: "数据过滤条件" },
+              { key: "fieldVisibility", label: "字段显隐" },
+              { key: "customButton", label: "自定义按钮" },
+              { key: "mobilePreview", label: "移动端视图图" },
+            ].map((t) => {
+              const active = viewCreateActiveTab === (t.key as any);
+              return (
+                <div
+                  key={t.key}
+                  onClick={() => setViewCreateActiveTab(t.key as any)}
+                  style={{
+                    cursor: "pointer",
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    marginBottom: 6,
+                    background: active ? "#e6f7ff" : "transparent",
+                    color: active ? "#1890ff" : "#262626",
+                    fontWeight: active ? 600 : 400,
+                    userSelect: "none",
+                  }}
+                >
+                  {t.label}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ flex: 1, paddingTop: 4 }}>
+            {viewCreateActiveTab === "filter" && (
+              <>
+                <div style={{ marginBottom: 12, fontWeight: 600 }}>
+                  数据过滤条件
+                </div>
+
+                <div
+                  style={{
+                    background: "#fafafa",
+                    border: "1px solid #f0f0f0",
+                    borderRadius: 6,
+                    padding: "12px 16px",
+                    marginBottom: 16,
+                    color: "#595959",
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  设置此视图下的数据过滤条件，用户在该视图下仅看到符合条件的数据。
+                </div>
+
+                <Radio.Group
+                  value={viewCreateFilterType}
+                  onChange={(e) => setViewCreateFilterType(e.target.value)}
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  <Radio value="all">全部数据</Radio>
+                  <Radio value="custom">按条件过滤</Radio>
+                </Radio.Group>
+
+                {viewCreateFilterType === "all" ? (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      background: "#fafafa",
+                      border: "1px solid #f0f0f0",
+                      borderRadius: 6,
+                      padding: 16,
+                      color: "#999",
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    当前选择“全部数据”，将不进行过滤。
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 12 }}>
+                    <div
+                      style={{
+                        background: "#fafafa",
+                        border: "1px solid #f0f0f0",
+                        borderRadius: 6,
+                        padding: 16,
+                        minHeight: 140,
+                      }}
+                    >
+                      {viewCreateFilterConditions.map((condition, idx) => {
+                        const field = viewCreateFilterFields.find(
+                          (f: any) => f.fieldId === condition.fieldId,
+                        );
+                        return (
+                          <div
+                            key={`${condition.fieldId}-${idx}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "10px 12px",
+                              background: "#fff",
+                              borderRadius: 6,
+                              border: "1px solid #e8e8e8",
+                            }}
+                          >
+                            <Select
+                              size="small"
+                              style={{ width: 150 }}
+                              value={condition.fieldId}
+                              options={viewCreateFilterFieldOptions}
+                              onChange={(nextFieldId) => {
+                                setViewCreateFilterConditions((prev) =>
+                                  prev.map((c, cIdx) =>
+                                    cIdx === idx
+                                      ? { ...c, fieldId: String(nextFieldId), value: "" }
+                                      : c,
+                                  ),
+                                );
+                              }}
+                            />
+
+                            <Select
+                              size="small"
+                              style={{ width: 110 }}
+                              value={condition.operator || "eq"}
+                              options={viewCreateFilterOperatorOptions}
+                              onChange={(nextOperator) => {
+                                setViewCreateFilterConditions((prev) =>
+                                  prev.map((c, cIdx) =>
+                                    cIdx === idx
+                                      ? { ...c, operator: String(nextOperator) }
+                                      : c,
+                                  ),
+                                );
+                              }}
+                            />
+
+                            <div style={{ flex: 1, minWidth: 160 }}>
+                              {field ? renderViewCreateFilterValueInput(field, idx) : null}
+                            </div>
+
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              disabled={viewCreateFilterConditions.length <= 1}
+                              onClick={() => {
+                                setViewCreateFilterConditions((prev) =>
+                                  prev.filter((_, cIdx) => cIdx !== idx),
+                                );
+                              }}
+                            />
+
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<PlusOutlined />}
+                              onClick={() => {
+                                const first = viewCreateFilterFields[0];
+                                if (!first?.fieldId) return;
+                                setViewCreateFilterConditions((prev) => [
+                                  ...prev,
+                                  { fieldId: first.fieldId, operator: "eq", value: "" },
+                                ]);
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {viewCreateActiveTab !== "filter" && (
+              <div style={{ color: "#999", padding: "40px 0", textAlign: "center" }}>
+                该页功能待接入
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
 
       {/* 操作记录弹窗 */}
       <OperationRecordModal

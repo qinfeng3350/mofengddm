@@ -399,10 +399,6 @@ export const DesignerPage = () => {
                   label: "流程设计",
                 },
                 {
-                  key: "list",
-                  label: "列表设计",
-                },
-                {
                   key: "settings",
                   label: "表单设置",
                 },
@@ -497,11 +493,6 @@ export const DesignerPage = () => {
             </Content>
           )}
 
-          {activeTab === "list" && (
-            <Content style={{ background: "#f5f5f5", padding: 24, height: "100%", overflow: "auto" }}>
-              <div>列表设计功能开发中...</div>
-            </Content>
-          )}
         </Layout>
       </Layout>
 

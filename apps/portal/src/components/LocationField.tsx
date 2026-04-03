@@ -18,14 +18,120 @@ interface LocationFieldProps {
 
 // 高德地图逆地理编码API（通过后端代理，避免CORS问题）
 const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
+  const ensureAMapScriptLoaded = async (apiKey: string): Promise<boolean> => {
+    try {
+      const w = window as any;
+      if (w.AMap) return true;
+      if (!apiKey) return false;
+
+      // 如果脚本正在加载，等待其加载完成
+      if (document.querySelector(`script[src*="webapi.amap.com/maps"]`)) {
+        // 轮询等待 AMap 挂载
+        for (let i = 0; i < 40; i++) {
+          if ((window as any).AMap) return true;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return (window as any).AMap ? true : false;
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = `https://webapi.amap.com/maps?v=2.0&key=${apiKey}`;
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("AMap script load failed"));
+        document.head.appendChild(script);
+      });
+
+      return !!(window as any).AMap;
+    } catch (e) {
+      console.error("加载高德 JS API 脚本失败:", e);
+      return false;
+    }
+  };
+
+  const reverseGeocodeByJS = async (lat2: number, lng2: number): Promise<string> => {
+    const apiKey = getAMapKey();
+    if (!apiKey) return "";
+    const ok = await ensureAMapScriptLoaded(apiKey);
+    if (!ok) return "";
+
+    try {
+      const AMap = (window as any).AMap;
+      const geocoder = new AMap.Geocoder();
+      const res: any = await new Promise((resolve) => {
+        geocoder.getAddress([lng2, lat2], (status: string, result: any) => {
+          resolve({ status, result });
+        });
+      });
+
+      if (res?.status === "complete" && res?.result?.info === "OK") {
+        const regeocode = res.result.regeocode || {};
+        if (regeocode.formattedAddress) return regeocode.formattedAddress;
+        if (regeocode.formatted_address) return regeocode.formatted_address;
+
+        const ac = regeocode.addressComponent || {};
+        const parts = [
+          ac.province,
+          ac.city,
+          ac.district,
+          ac.township,
+          ac.neighborhood,
+          ac.street,
+          ac.streetNumber?.street,
+          ac.streetNumber?.number,
+        ].filter(Boolean);
+        if (parts.length > 0) return parts.join("");
+      }
+    } catch (e) {
+      console.error("高德 JS Geocoder 逆地理编码失败:", e);
+    }
+
+    return "";
+  };
+
+  const reverseGeocodeByOSM = async (lat2: number, lng2: number): Promise<string> => {
+    try {
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat2}&lon=${lng2}&accept-language=zh-CN`,
+        {
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      );
+      if (!resp.ok) return "";
+      const data = await resp.json();
+      const display = data?.display_name;
+      if (typeof display === "string" && display.trim()) return display;
+
+      const addr = data?.address || {};
+      const parts = [
+        addr.state || addr.province,
+        addr.city || addr.town || addr.county,
+        addr.suburb || addr.city_district || addr.district,
+        addr.road || addr.pedestrian,
+        addr.house_number,
+      ].filter(Boolean);
+      if (parts.length > 0) return parts.join("");
+    } catch (e) {
+      console.error("OSM 逆地理编码失败:", e);
+    }
+    return "";
+  };
+
   try {
     // 方案1：调用后端API（推荐，避免CORS问题）
     const response = await fetch(`/api/geocode/reverse?lat=${lat}&lng=${lng}`);
     if (response.ok) {
       const data = await response.json();
-      if (data.address) {
-        return data.address;
-      }
+      const address =
+        data?.address ||
+        data?.data?.address ||
+        data?.formattedAddress ||
+        data?.formatted_address ||
+        "";
+      if (typeof address === "string" && address.trim()) return address;
     }
   } catch (error) {
     console.error("后端逆地理编码失败:", error);
@@ -41,30 +147,55 @@ const reverseGeocode = async (lat: number, lng: number): Promise<string> => {
       const data = await response.json();
       
       if (data.status === "1" && data.regeocode) {
-        // 优先使用格式化地址
-        if (data.regeocode.formattedAddress) {
-          return data.regeocode.formattedAddress;
-        }
-        
-        // 否则构建地址
-        const addressComponent = data.regeocode.addressComponent;
-        if (addressComponent) {
-          const parts = [
-            addressComponent.province,
-            addressComponent.city,
-            addressComponent.district,
-            addressComponent.street,
-            addressComponent.streetNumber,
-          ].filter(Boolean);
-          return parts.join("");
-        }
+        // 优先使用格式化地址（REST 接口字段名通常是 formatted_address）
+        const formatted =
+          data.regeocode.formatted_address ||
+          data.regeocode.formattedAddress ||
+          "";
+        if (formatted) return formatted;
+
+        // 否则构建地址（尽量兼容不同字段命名）
+        const addressComponent = data.regeocode.addressComponent || {};
+        const streetNumber =
+          addressComponent.streetNumber ||
+          addressComponent.street_number ||
+          {};
+
+        const parts = [
+          addressComponent.province,
+          addressComponent.city,
+          addressComponent.district,
+          addressComponent.township || addressComponent.town || undefined,
+          addressComponent.neighborhood || addressComponent.community || undefined,
+          // 高德有时会把街道/门牌拆在 streetNumber 内
+          streetNumber.street || addressComponent.street,
+          streetNumber.number || addressComponent.streetNumber,
+        ].filter(Boolean);
+
+        if (parts.length > 0) return parts.join("");
       }
     }
   } catch (error) {
     console.error("高德地图逆地理编码失败:", error);
   }
 
-  // 方案3：返回坐标（作为最后备选）
+  // 方案3：使用高德 JS API（不依赖 REST 字段名，成功率更高）
+  try {
+    const addr = await reverseGeocodeByJS(lat, lng);
+    if (addr && addr.trim()) return addr;
+  } catch (e) {
+    // ignore
+  }
+
+  // 方案4：OSM 逆地理编码（无需 Key，作为公网兜底）
+  try {
+    const addr = await reverseGeocodeByOSM(lat, lng);
+    if (addr && addr.trim()) return addr;
+  } catch (e) {
+    // ignore
+  }
+
+  // 方案5：返回坐标（作为最后备选）
   return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
 };
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Upload, message } from "antd";
 import type { UploadFile } from "antd/es/upload/interface";
-import { UploadOutlined } from "@ant-design/icons";
+import { InboxOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { uploadAttachmentFile } from "@/api/upload";
 import {
   attachmentValueToFileList,
@@ -40,8 +40,14 @@ export function AttachmentUpload({
   }, [valueKey]);
 
   return (
-    <Upload
+    <Upload.Dragger
       listType={pictureMode ? "picture-card" : "text"}
+      style={{
+        background: "#fff",
+        borderRadius: 4,
+        border: "1px dashed #d9d9d9",
+        padding: size === "small" ? 6 : 12,
+      }}
       fileList={fileList}
       disabled={disabled}
       multiple={multiple}
@@ -72,15 +78,26 @@ export function AttachmentUpload({
       }}
     >
       {pictureMode ? (
-        <div>
-          <UploadOutlined />
-          <div style={{ marginTop: 8 }}>上传</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <UploadOutlined style={{ fontSize: 20, color: "#666" }} />
+          <div style={{ marginTop: 6, color: "#666", fontSize: 12 }}>手机扫码上传</div>
+          <div style={{ marginTop: 8 }}>
+            <Button
+              size="small"
+              type="text"
+              icon={<PlusOutlined />}
+              style={{ paddingLeft: 0, paddingRight: 0 }}
+            >
+              选择
+            </Button>
+          </div>
         </div>
       ) : (
-        <Button size={size === "small" ? "small" : "middle"} icon={<UploadOutlined />}>
-          选择文件
-        </Button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <InboxOutlined style={{ fontSize: 18, color: "#666" }} />
+          <div style={{ marginTop: 6, color: "#666", fontSize: 12 }}>点击或拖拽附件上传</div>
+        </div>
       )}
-    </Upload>
+    </Upload.Dragger>
   );
 }

@@ -7,6 +7,7 @@ interface RuntimeContainerRendererProps {
   container: LayoutContainerSchemaType;
   control: Control<Record<string, unknown>>;
   formValues?: Record<string, unknown>;
+  formSchema?: { fields?: any[]; formName?: string };
   disabled?: boolean;
 }
 
@@ -14,6 +15,7 @@ export const RuntimeContainerRenderer = ({
   container,
   control,
   formValues = {},
+  formSchema,
   disabled,
 }: RuntimeContainerRendererProps) => {
   const containerFields = (container.children || []) as FormFieldSchema[];
@@ -52,6 +54,7 @@ export const RuntimeContainerRenderer = ({
                 field={field}
                 control={control}
                 formValues={formValues}
+                formSchema={formSchema}
                 disabled={disabled}
               />
             ))}
@@ -81,6 +84,7 @@ export const RuntimeContainerRenderer = ({
                       field={field}
                       control={control}
                       formValues={formValues}
+                      formSchema={formSchema}
                       disabled={disabled}
                     />
                   ))}
@@ -113,6 +117,7 @@ export const RuntimeContainerRenderer = ({
                   field={field}
                   control={control}
                   formValues={formValues}
+                  formSchema={formSchema}
                   disabled={disabled}
                 />
               ))}

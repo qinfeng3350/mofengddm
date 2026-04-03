@@ -39,6 +39,7 @@ const getFieldIcon = (type: string, label: string) => {
     number: <NumberOutlined />,
     radio: <CheckCircleOutlined />,
     checkbox: <CheckSquareOutlined />,
+    boolean: <SwapOutlined />,
     select: <DownOutlined />,
     multiselect: <DownOutlined />,
     attachment: <PaperClipOutlined />,

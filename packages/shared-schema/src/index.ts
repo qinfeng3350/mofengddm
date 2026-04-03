@@ -12,6 +12,7 @@ export const FieldTypeEnum = z.enum([
   "date",
   "datetime",
   "checkbox",
+  "boolean", // 是/否（滑动开关，布尔值）
   "radio",
   "attachment",
   "subtable",

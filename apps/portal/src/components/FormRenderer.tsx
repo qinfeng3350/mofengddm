@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
-import { Form as AntForm, Button, Spin, message, Space, Modal } from "antd";
+import { FormProvider, useForm } from "react-hook-form";
+import { Form as AntForm, Button, Spin, message, Space, Modal, Row, Col } from "antd";
 import { UnorderedListOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -179,6 +179,8 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     enabled: !!recordId && (isEditMode || isViewMode),
   });
 
+  const { user } = useAuthStore();
+
   // 流水号生成状态
   const [serialNumberCache, setSerialNumberCache] = useState<Record<string, string>>({});
 
@@ -240,6 +242,12 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
         return;
       }
       
+      // 人员字段：如果设置为“当前登录人”，直接写入 defaultValues，避免首次渲染依赖 setValue
+      if (field.type === "user" && field.advanced?.defaultMode === "currentUser" && user?.id) {
+        values[fieldId] = user.id;
+        return;
+      }
+
       // 其他字段：使用字段的默认值
       if (field.defaultValue !== undefined) {
         values[fieldId] = field.defaultValue;
@@ -307,15 +315,19 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     });
   }, [formDefinition, formId, mode, existingData]);
 
+  const methods = useForm({
+    defaultValues,
+  });
+
   const {
     control,
     handleSubmit,
     reset,
     watch,
+    setValue,
+    getValues,
     formState: { isSubmitting },
-  } = useForm({
-    defaultValues,
-  });
+  } = methods;
 
   // 当默认值（例如查看/编辑时的已有数据）或流水号生成完成后，重置表单填充值
   // 否则第一次渲染是空的，后续获取到 existingData 也不会自动填入
@@ -334,8 +346,6 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
 
   // 监听表单值变化，用于公式计算
   const formValues = watch();
-
-  const { user } = useAuthStore();
 
   const onSubmit = async (data: Record<string, unknown>, status: string = "submitted") => {
     try {
@@ -448,6 +458,49 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     return map;
   }, [allUsers]);
 
+  // 部门字段：如果在设计器里选择了“本部门”，则在运行时把当前用户部门写入表单默认值
+  useEffect(() => {
+    if (!formDefinition) return;
+    if (!user?.id) return;
+    if (!userMap.size) return;
+    if (!setValue || !getValues) return;
+
+    const currentUser = userMap.get(String(user.id));
+    const currentDeptId =
+      currentUser?.departmentId ?? currentUser?.department?.id ?? undefined;
+
+    if (!currentDeptId) return;
+
+    const elements = formDefinition.config.elements || formDefinition.config.fields || [];
+    const collectFields = (items: any[]): any[] => {
+      const result: any[] = [];
+      items.forEach((item) => {
+        if (item?.fieldId) {
+          result.push(item);
+        } else if (item?.children && Array.isArray(item.children)) {
+          result.push(...collectFields(item.children));
+        } else if (item?.columns && Array.isArray(item.columns)) {
+          item.columns.forEach((col: any) => {
+            if (col?.children && Array.isArray(col.children)) {
+              result.push(...collectFields(col.children));
+            }
+          });
+        }
+      });
+      return result;
+    };
+
+    const runtimeFields = collectFields(elements);
+    runtimeFields.forEach((f: any) => {
+      if (f?.fieldId && f.type === "department" && f.advanced?.defaultMode === "currentDepartment") {
+        const current = getValues(f.fieldId);
+        if (current === undefined || current === null || current === "") {
+          setValue(f.fieldId, currentDeptId);
+        }
+      }
+    });
+  }, [user?.id, userMap, formDefinition, setValue, getValues]);
+
   const showPreviewThenSubmit = async (data: Record<string, unknown>) => {
     if (hasWorkflowRuntime) {
       setPendingSubmitData(data);
@@ -482,44 +535,103 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     layout: formDefinition.config.layout,
     elements: formDefinition.config.elements,
   };
+  // 用于运行时布局/权限等：metadata 可能在 formDefinition.metadata 或 config.metadata
+  (formSchema as any).metadata = formMetadata;
 
   // 使用elements数组（如果存在），否则使用fields数组
   const elements = formSchema.elements || formSchema.fields.map((f) => f as any);
+  const columnsCount = (() => {
+    const mode = (formSchema as any)?.metadata?.formLayout || "double";
+    if (mode === "single") return 1;
+    if (mode === "triple") return 3;
+    if (mode === "quad") return 4;
+    return 2;
+  })();
 
   return (
+    <FormProvider {...methods}>
     <AntForm layout="vertical" onFinish={handleSubmit(showPreviewThenSubmit)}>
-      {elements.map((element: any) => {
-        // 判断是字段还是容器
-        if ('fieldId' in element) {
-          const field = element as FormFieldSchema;
-          // 跳过按钮字段（按钮在表单底部单独渲染）
-          if (field.type === 'button') {
-            return null;
+      {columnsCount === 1 ? (
+        elements.map((element: any) => {
+          // 判断是字段还是容器
+          if ("fieldId" in element) {
+            const field = element as FormFieldSchema;
+            // 跳过按钮字段（按钮在表单底部单独渲染）
+            if (field.type === "button") {
+              return null;
+            }
+            return (
+              <FormFieldRenderer
+                key={field.fieldId}
+                field={field}
+                control={control}
+                formValues={formValues}
+                disabled={isViewMode}
+                formSchema={formSchema}
+              />
+            );
+          } else if ("containerId" in element) {
+            const container = element as LayoutContainerSchemaType;
+            return (
+              <RuntimeContainerRenderer
+                key={container.containerId}
+                container={container}
+                control={control}
+                formValues={formValues}
+                formSchema={formSchema}
+                disabled={isViewMode}
+              />
+            );
           }
-          return (
-            <FormFieldRenderer 
-              key={field.fieldId} 
-              field={field} 
-              control={control} 
-              formValues={formValues}
-              disabled={isViewMode}
-              formSchema={formSchema}
-            />
-          );
-        } else if ('containerId' in element) {
-          const container = element as LayoutContainerSchemaType;
-          return (
-            <RuntimeContainerRenderer
-              key={container.containerId}
-              container={container}
-              control={control}
-              formValues={formValues}
-              disabled={isViewMode}
-            />
-          );
-        }
-        return null;
-      })}
+          return null;
+        })
+      ) : (
+        <Row gutter={[16, 12]}>
+          {elements.map((element: any) => {
+            if ("containerId" in element) {
+              const container = element as LayoutContainerSchemaType;
+              return (
+                <Col span={24} key={container.containerId}>
+                  <RuntimeContainerRenderer
+                    container={container}
+                    control={control}
+                    formValues={formValues}
+                    formSchema={formSchema}
+                    disabled={isViewMode}
+                  />
+                </Col>
+              );
+            }
+
+            if ("fieldId" in element) {
+              const field = element as FormFieldSchema;
+              if (field.type === "button") return null;
+              const rawSpan = Number((field as any)?.advanced?.fieldSpan);
+              const fieldSpan =
+                Number.isFinite(rawSpan) && rawSpan > 0 && rawSpan <= 24
+                  ? Math.round(rawSpan)
+                  : undefined;
+              // 子表不受表单列布局限制：永远独占一行
+              const span =
+                field.type === "subtable"
+                  ? 24
+                  : fieldSpan || Math.floor(24 / columnsCount) || 12;
+              return (
+                <Col span={span} key={field.fieldId} style={{ minWidth: 0 }}>
+                  <FormFieldRenderer
+                    field={field}
+                    control={control}
+                    formValues={formValues}
+                    disabled={isViewMode}
+                    formSchema={formSchema}
+                  />
+                </Col>
+              );
+            }
+            return null;
+          })}
+        </Row>
+      )}
       
       {/* 渲染按钮字段 */}
       {elements
@@ -627,6 +739,7 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
         })()}
       </Modal>
     </AntForm>
+    </FormProvider>
   );
 };
 

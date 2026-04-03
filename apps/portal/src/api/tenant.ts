@@ -10,6 +10,7 @@ export type TenantLimitsRaw = {
   enabled?: boolean;
   expiresAt?: string;
   maxEnabledUsers?: number;
+  maxForms?: number;
   maxRecords?: number;
 };
 

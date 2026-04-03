@@ -1632,11 +1632,15 @@ export const RuntimeListPage = () => {
                       },
                     },
                     {
-                      key: "dashboard",
-                      label: "仪表盘",
-                      icon: <DashboardOutlined style={{ color: "#1890ff" }} />,
+                      key: "developer",
+                      label: "开发者页面",
+                      icon: <ThunderboltOutlined style={{ color: "#722ed1" }} />,
                       onClick: () => {
-                        message.info("仪表盘功能待实现");
+                        if (!appId) {
+                          message.warning("请先选择应用");
+                          return;
+                        }
+                        navigate(`/app/${appId}/developer`);
                       },
                     },
                     {

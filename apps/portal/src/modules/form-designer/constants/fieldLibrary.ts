@@ -68,8 +68,8 @@ export const BASIC_FIELDS: FieldDefinition[] = [
   },
   {
     label: "是/否",
-    type: "checkbox",
-    description: "布尔值选择",
+    type: "boolean",
+    description: "滑动开关，是或否",
   },
   {
     label: "附件",

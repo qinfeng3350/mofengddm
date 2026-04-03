@@ -1,8 +1,9 @@
-import { Form, Input, Switch, Empty, InputNumber, Button, Modal, Space, Tabs, Select, Alert, Tag, Radio, Typography } from "antd";
+import { Form, Input, Switch, Empty, InputNumber, Button, Modal, Space, Tabs, Select, Alert, Tag, Radio, Typography, Table, Checkbox } from "antd";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useFormDesignerStore } from "../store/useFormDesignerStore";
 import { FieldTypeEnum } from "@mofeng/shared-schema";
-import { CalculatorOutlined } from "@ant-design/icons";
+import { CalculatorOutlined, DeleteOutlined, EditOutlined, HolderOutlined, PlusOutlined } from "@ant-design/icons";
+import { useDroppable } from "@dnd-kit/core";
 import { IconSelector } from "@/components/IconSelector";
 import { FormPropertiesPanel } from "./FormPropertiesPanel";
 import { OptionsConfigPanel } from "./OptionsConfigPanel";
@@ -11,17 +12,56 @@ import { useQuery } from "@tanstack/react-query";
 import { formDefinitionApi } from "@/api/formDefinition";
 import { useSearchParams } from "react-router-dom";
 import styles from "./PropertyPanel.module.css";
+import { FormulaDefaultEditorModal } from "./FormulaDefaultEditorModal";
+import { apiClient } from "@/api/client";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export const PropertyPanel = () => {
   const formSchema = useFormDesignerStore((state) => state.formSchema);
   const setFormSchema = useFormDesignerStore((state) => state.setFormSchema);
   const selectedFieldId = useFormDesignerStore((state) => state.selectedFieldId);
   const selectedContainerId = useFormDesignerStore((state) => state.selectedContainerId);
+  const selectedSubtableField = useFormDesignerStore((state) => state.selectedSubtableField);
   const updateField = useFormDesignerStore((state) => state.updateField);
   const updateContainer = useFormDesignerStore((state) => state.updateContainer);
   const [activeTab, setActiveTab] = useState("field");
 
+  const findFieldInSchema = (fieldId?: string) => {
+    if (!fieldId) return undefined;
+    let field = formSchema.fields.find((f) => f.fieldId === fieldId);
+    if (field) return field as any;
+    const elements = formSchema.elements || [];
+    const stack: any[] = [...elements];
+    while (stack.length) {
+      const el = stack.shift();
+      if (!el) continue;
+      if ("fieldId" in el && el.fieldId === fieldId) return el as any;
+      if ("children" in el && Array.isArray((el as any).children)) {
+        stack.push(...(el as any).children);
+      }
+      if ("columns" in el && Array.isArray((el as any).columns)) {
+        (el as any).columns.forEach((col: any) => {
+          if (col?.children && Array.isArray(col.children)) stack.push(...col.children);
+        });
+      }
+    }
+    return undefined;
+  };
+
   const currentField = useMemo(() => {
+    // 子表列字段被选中：返回“子字段”，并携带 parentId 信息用于回写
+    if (selectedSubtableField?.parentFieldId && selectedSubtableField?.subFieldId) {
+      const parent = findFieldInSchema(selectedSubtableField.parentFieldId);
+      const subs: any[] = parent?.subtableFields || [];
+      const sub = subs.find((sf: any) => sf?.fieldId === selectedSubtableField.subFieldId);
+      if (parent && sub) {
+        return {
+          ...sub,
+          __subtableParentFieldId: parent.fieldId,
+          __subtableSubFieldId: sub.fieldId,
+        } as any;
+      }
+    }
     // 首先从 fields 数组中查找
     let field = formSchema.fields.find((field) => field.fieldId === selectedFieldId);
     if (field) return field;
@@ -41,7 +81,7 @@ export const PropertyPanel = () => {
       }
     }
     return undefined;
-  }, [formSchema.fields, formSchema.elements, selectedFieldId]);
+  }, [formSchema.fields, formSchema.elements, selectedFieldId, selectedSubtableField]);
 
   const currentContainer = useMemo(() => {
     const elements = formSchema.elements || [];
@@ -58,6 +98,19 @@ export const PropertyPanel = () => {
   }, [currentField, currentContainer]);
 
   const handleFieldValuesChange = (changedValues: Record<string, unknown>) => {
+    const asAny = currentField as any;
+    // 子表列字段：写回父字段的 subtableFields
+    if (asAny?.__subtableParentFieldId && asAny?.__subtableSubFieldId) {
+      const parentId = String(asAny.__subtableParentFieldId);
+      const subId = String(asAny.__subtableSubFieldId);
+      const parent = findFieldInSchema(parentId);
+      const subs: any[] = parent?.subtableFields || [];
+      const nextSubs = subs.map((sf: any) =>
+        String(sf?.fieldId) === subId ? { ...sf, ...changedValues } : sf
+      );
+      updateField(parentId, { subtableFields: nextSubs } as any);
+      return;
+    }
     if (selectedFieldId) {
       // 立即更新字段，确保修改立即生效
       updateField(selectedFieldId, changedValues);
@@ -123,6 +176,111 @@ export const PropertyPanel = () => {
   );
 };
 
+/** 与 DesignerCanvas / FormRenderer 一致：表单布局 → 栅格列数 */
+function getFormLayoutColumnsCount(formSchema: any): number {
+  const mode = formSchema?.metadata?.formLayout || "double";
+  if (mode === "single") return 1;
+  if (mode === "triple") return 3;
+  if (mode === "quad") return 4;
+  return 2;
+}
+
+/** 未配置 fieldSpan 时，与当前表单列数对齐的默认占位（24 栅格） */
+function defaultFieldSpanForLayout(columnsCount: number): number {
+  if (columnsCount === 1) return 24;
+  return Math.floor(24 / columnsCount) || 12;
+}
+
+/**
+ * 控件「布局」下拉：选项与文案随表单「单列/双列/三列/四列」变化，避免三列表单仍只显示「1/2」等双列语义。
+ */
+function getFieldSpanOptions(columnsCount: number): { value: number; label: string }[] {
+  switch (columnsCount) {
+    case 1:
+      return [{ value: 24, label: "整行" }];
+    case 2:
+      return [
+        { value: 12, label: "1/2 行（一列）" },
+        { value: 24, label: "整行" },
+        { value: 6, label: "1/4 行" },
+        { value: 8, label: "1/3 行" },
+        { value: 16, label: "2/3 行" },
+        { value: 18, label: "3/4 行" },
+      ];
+    case 3:
+      return [
+        { value: 8, label: "1/3 行（一列）" },
+        { value: 16, label: "2/3 行（两列）" },
+        { value: 12, label: "1/2 行" },
+        { value: 24, label: "整行" },
+        { value: 6, label: "1/4 行" },
+        { value: 18, label: "3/4 行" },
+      ];
+    case 4:
+      return [
+        { value: 6, label: "1/4 行（一列）" },
+        { value: 12, label: "1/2 行（两列）" },
+        { value: 18, label: "3/4 行（三列）" },
+        { value: 24, label: "整行" },
+        { value: 8, label: "1/3 行" },
+        { value: 16, label: "2/3 行" },
+      ];
+    default:
+      return [
+        { value: 6, label: "1/4" },
+        { value: 8, label: "1/3" },
+        { value: 12, label: "1/2" },
+        { value: 16, label: "2/3" },
+        { value: 18, label: "3/4" },
+        { value: 24, label: "全部" },
+      ];
+  }
+}
+
+function buildFieldSpanSelectOptions(
+  columnsCount: number,
+  currentSpan: number | undefined
+): { value: number; label: string }[] {
+  const base = getFieldSpanOptions(columnsCount);
+  const allowed = new Set(base.map((o) => o.value));
+  const raw = Number(currentSpan);
+  if (Number.isFinite(raw) && raw > 0 && raw <= 24 && !allowed.has(raw)) {
+    return [{ value: raw, label: `${raw}/24（当前）` }, ...base];
+  }
+  return base;
+}
+
+/**
+ * 属性面板里 Ant Form 与 useForm 单例会「合并」 setFieldsValue，切换字段时必须 reset，
+ * 否则上一字段的 advanced.defaultMode 等会残留，表现为新字段默认变成公式编辑、多字段互相串值。
+ * 对支持「自定义 / 数据联动 / 公式编辑」的字段，store 里未写 defaultMode 时表单侧默认「自定义」。
+ */
+function mergeFieldForPropertiesForm(field: any, formSchema?: any): Record<string, unknown> {
+  const t = field.type;
+  const usesDefaultModeThreeWay =
+    t !== "user" &&
+    t !== "department" &&
+    t !== "date" &&
+    t !== "datetime" &&
+    t !== "formula" &&
+    t !== "subtable" &&
+    t !== "serial";
+
+  const cols = getFormLayoutColumnsCount(formSchema);
+  const adv = { ...(field.advanced || {}) };
+  if (usesDefaultModeThreeWay) {
+    adv.defaultMode = adv.defaultMode ?? "custom";
+  }
+  if (t !== "subtable" && adv.fieldSpan == null) {
+    adv.fieldSpan = defaultFieldSpanForLayout(cols);
+  }
+
+  return {
+    ...field,
+    advanced: adv,
+  };
+}
+
 // 控件属性面板
 const FieldPropertiesPanel = ({ 
   field, 
@@ -135,25 +293,75 @@ const FieldPropertiesPanel = ({
 }) => {
   const [form] = Form.useForm();
   const [fieldTab, setFieldTab] = useState("basic");
+  const [formulaDefaultModalOpen, setFormulaDefaultModalOpen] = useState(false);
   const prevFieldIdRef = useRef<string | undefined>(undefined);
   
-  // 只在字段切换时（fieldId变化）更新表单值，避免在用户输入时覆盖
+  // 只在字段切换时（fieldId 变化）重置并灌入当前字段，避免 Form 合并残留上一字段的状态
   useEffect(() => {
     if (prevFieldIdRef.current !== field.fieldId) {
-      // 字段切换了，重置表单值
-      form.setFieldsValue(field);
+      form.resetFields();
+      form.setFieldsValue(mergeFieldForPropertiesForm(field, formSchema));
       prevFieldIdRef.current = field.fieldId;
       setFieldTab("basic");
     }
-  }, [field.fieldId, field, form]);
+  }, [field.fieldId, field, form, formSchema]);
   
   const isSerialField = field.type === "serial";
+
+  const columnsCount = useMemo(
+    () => getFormLayoutColumnsCount(formSchema),
+    [formSchema?.metadata?.formLayout]
+  );
+  const fieldSpanSelectOptions = useMemo(
+    () =>
+      buildFieldSpanSelectOptions(
+        columnsCount,
+        field.advanced?.fieldSpan != null ? Number(field.advanced.fieldSpan) : undefined
+      ),
+    [columnsCount, field.advanced?.fieldSpan]
+  );
+
+  // 部门字段设计时需要：用于“本部门”默认快捷值
+  const { user: authUser } = useAuthStore();
+  const { data: currentUserWithDept } = useQuery({
+    queryKey: ["current-user-with-dept", authUser?.id, authUser?.account],
+    enabled: field.type === "department" && !!authUser?.id && !!authUser?.account,
+    retry: false,
+    queryFn: async () => {
+      const res = await apiClient.get("/users", {
+        params: { includeDisabled: "true" },
+      });
+      const list = Array.isArray(res) ? res : [];
+      return list.find((u: any) => String(u.id) === String(authUser?.id)) || null;
+    },
+  });
+  const currentDepartmentId = currentUserWithDept?.departmentId != null ? String(currentUserWithDept.departmentId) : undefined;
+
+  // 如果用户已经选择“本部门”但当前用户部门还没加载完，
+  // 等拿到 departmentId 后自动补齐 defaultValue，避免出现“选了但没有默认值”的情况。
+  useEffect(() => {
+    const mode = form.getFieldValue(["advanced", "defaultMode"]);
+    if (mode === "currentDepartment" && currentDepartmentId) {
+      const dv = form.getFieldValue("defaultValue");
+      if (dv == null || dv === "") {
+        form.setFieldsValue({ defaultValue: currentDepartmentId });
+        // 避免仅依赖 antd Form 的 onValuesChange 触发：这里显式同步写回 store
+        onValuesChange({
+          advanced: {
+            ...(field.advanced || {}),
+            defaultMode: "currentDepartment",
+          },
+          defaultValue: currentDepartmentId,
+        });
+      }
+    }
+  }, [currentDepartmentId, form]);
   
   const basicForm = (
     <Form
       form={form}
       layout="vertical"
-      initialValues={field}
+      initialValues={mergeFieldForPropertiesForm(field, formSchema)}
       onValuesChange={(changedValues, allValues) => {
         // 先把原始变更回调出去
         if (Object.keys(changedValues).length) {
@@ -185,7 +393,14 @@ const FieldPropertiesPanel = ({
       key={field.fieldId}
     >
       <Form.Item label="字段类型">
-        <Input value={field.type} disabled />
+        <Input
+          value={
+            field.type === FieldTypeEnum.Enum.boolean
+              ? "boolean（是/否开关）"
+              : field.type
+          }
+          disabled
+        />
       </Form.Item>
       <Form.Item label="字段名称" name="label" rules={[{ required: true }]}>
         <Input placeholder="请输入字段名称" />
@@ -217,6 +432,25 @@ const FieldPropertiesPanel = ({
         </Radio.Group>
       </Form.Item>
 
+      {/* 字段布局：主表字段可单独设置宽度，子表字段除外 */}
+      {field.type !== "subtable" && (
+        <Form.Item
+          label="布局"
+          name={["advanced", "fieldSpan"]}
+          initialValue={
+            field.advanced?.fieldSpan ?? defaultFieldSpanForLayout(columnsCount)
+          }
+          tooltip="与「表单属性 → 表单布局」一致：三列时默认占 1/3 行（8/24 栅格）"
+        >
+          <Select
+            options={fieldSpanSelectOptions.map((o) => ({
+              value: o.value,
+              label: o.label,
+            }))}
+          />
+        </Form.Item>
+      )}
+
       {/* 数字类型特定配置 */}
       {field.type === FieldTypeEnum.Enum.number && (
         <>
@@ -228,6 +462,74 @@ const FieldPropertiesPanel = ({
           </Form.Item>
           <Form.Item label="小数位数" name={["validation", "precision"]}>
             <InputNumber min={0} max={10} placeholder="小数位数" style={{ width: "100%" }} />
+          </Form.Item>
+
+          {/* 数字显示格式（对应你截图那块） */}
+          <Form.Item label="格式" style={{ marginTop: 8 }}>
+            <Select value="number" disabled>
+              <Select.Option value="number">数值</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate>
+            {({ getFieldValue }) => {
+              const nf = getFieldValue(["advanced", "numberFormat"]) || {};
+              const keepDecimals = nf.keepDecimals !== false; // 默认开启
+              const decimalPlaces =
+                typeof nf.decimalPlaces === "number"
+                  ? nf.decimalPlaces
+                  : typeof getFieldValue(["validation", "precision"]) === "number"
+                    ? getFieldValue(["validation", "precision"])
+                    : 2;
+              const noRounding = nf.noRounding === true;
+              const thousand = nf.thousandSeparator === true;
+              const unit = nf.unit || "";
+              const sample = 99999.56;
+              const toFixed = (n: number, p: number) => {
+                const s = String(n);
+                if (!noRounding) return n.toFixed(p);
+                const [i, d = ""] = s.split(".");
+                return p <= 0 ? i : `${i}.${d.padEnd(p, "0").slice(0, p)}`;
+              };
+              const withSep = (s: string) => {
+                const [i, d] = s.split(".");
+                const ii = i.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+                return d != null && d !== "" ? `${ii}.${d}` : ii;
+              };
+              const sampleStr = keepDecimals ? toFixed(sample, decimalPlaces) : String(sample);
+              const preview = `${thousand ? withSep(sampleStr) : sampleStr}${unit ? ` ${unit}` : ""}`;
+              return (
+                <>
+                  <Form.Item name={["advanced", "numberFormat", "keepDecimals"]} valuePropName="checked" initialValue={keepDecimals}>
+                    <Checkbox>保留小数位数</Checkbox>
+                  </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(p, c) => p.advanced?.numberFormat?.keepDecimals !== c.advanced?.numberFormat?.keepDecimals}>
+                    {({ getFieldValue }) =>
+                      getFieldValue(["advanced", "numberFormat", "keepDecimals"]) !== false && (
+                        <Form.Item
+                          label="小数位数"
+                          name={["advanced", "numberFormat", "decimalPlaces"]}
+                          initialValue={decimalPlaces}
+                        >
+                          <InputNumber min={0} max={10} style={{ width: "100%" }} />
+                        </Form.Item>
+                      )
+                    }
+                  </Form.Item>
+                  <Form.Item name={["advanced", "numberFormat", "noRounding"]} valuePropName="checked" initialValue={noRounding}>
+                    <Checkbox>不四舍五入</Checkbox>
+                  </Form.Item>
+                  <Form.Item name={["advanced", "numberFormat", "thousandSeparator"]} valuePropName="checked" initialValue={thousand}>
+                    <Checkbox>显示千分符</Checkbox>
+                  </Form.Item>
+                  <div style={{ padding: "6px 10px", background: "#fafafa", borderRadius: 6, marginBottom: 8 }}>
+                    <Typography.Text type="secondary">{preview}</Typography.Text>
+                  </div>
+                  <Form.Item label="单位" name={["advanced", "numberFormat", "unit"]} initialValue={unit}>
+                    <Input placeholder="请输入" />
+                  </Form.Item>
+                </>
+              );
+            }}
           </Form.Item>
         </>
       )}
@@ -362,6 +664,15 @@ const FieldPropertiesPanel = ({
         />
       )}
 
+      {/* 是/否开关：无需配置选项 */}
+      {field.type === FieldTypeEnum.Enum.boolean && (
+        <Form.Item label="说明">
+          <Typography.Text type="secondary">
+            滑动开关，值为是/否（true/false），无需添加选项。
+          </Typography.Text>
+        </Form.Item>
+      )}
+
       {/* 子表字段配置 */}
       {field.type === "subtable" && (
         <SubtableFieldsConfigPanel 
@@ -401,9 +712,68 @@ const FieldPropertiesPanel = ({
 
           {/* 部门字段：预留快捷默认（后续可接入“当前用户部门”） */}
           {field.type === "department" && (
-            <Form.Item label="默认值" name="defaultValue">
-              <Input placeholder="请输入部门ID（当前登录人部门默认值待接入）" />
-            </Form.Item>
+            <>
+              <Form.Item
+                label="默认值模式"
+                name={["advanced", "defaultMode"]}
+                initialValue={field.advanced?.defaultMode || "none"}
+              >
+                <Select
+                  onChange={(mode) => {
+                    if (mode === "none") {
+                      form.setFieldsValue({ defaultValue: undefined });
+                      onValuesChange({
+                        advanced: {
+                          ...(field.advanced || {}),
+                          defaultMode: mode,
+                        },
+                        defaultValue: undefined,
+                      });
+                      return;
+                    }
+                    if (mode === "currentDepartment") {
+                      if (!currentDepartmentId) return;
+                      form.setFieldsValue({ defaultValue: currentDepartmentId });
+                      onValuesChange({
+                        advanced: {
+                          ...(field.advanced || {}),
+                          defaultMode: mode,
+                        },
+                        defaultValue: currentDepartmentId,
+                      });
+                      return;
+                    }
+                    // custom：如果之前没有，就先从本部门给一个起点
+                    const nextCustomDv = field.defaultValue ?? currentDepartmentId ?? undefined;
+                    form.setFieldsValue({
+                      defaultValue:
+                        nextCustomDv,
+                    });
+                    onValuesChange({
+                      advanced: {
+                        ...(field.advanced || {}),
+                        defaultMode: mode,
+                      },
+                      defaultValue: nextCustomDv,
+                    });
+                  }}
+                >
+                  <Select.Option value="none">无</Select.Option>
+                  <Select.Option value="currentDepartment">本部门</Select.Option>
+                  <Select.Option value="custom">自定义</Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item noStyle shouldUpdate={(prev, curr) => prev.advanced?.defaultMode !== curr.advanced?.defaultMode}>
+                {({ getFieldValue }) =>
+                  getFieldValue(["advanced", "defaultMode"]) === "custom" && (
+                    <Form.Item label="默认值" name="defaultValue">
+                      <Input placeholder="请输入部门ID（自定义模式）" />
+                    </Form.Item>
+                  )
+                }
+              </Form.Item>
+            </>
           )}
 
           {/* 日期 / 日期时间 字段：支持“当前时间” */}
@@ -454,11 +824,78 @@ const FieldPropertiesPanel = ({
             </>
           )}
 
-          {/* 其他字段：保留原来的静态默认值 */}
-          {field.type !== "user" && field.type !== "department" && field.type !== "date" && field.type !== "datetime" && (
-            <Form.Item label="默认值" name="defaultValue">
-              <Input placeholder="请输入默认值" />
+          {/* 是/否：布尔默认值 */}
+          {field.type === FieldTypeEnum.Enum.boolean && (
+            <Form.Item label="默认值" name="defaultValue" valuePropName="checked">
+              <Switch checkedChildren="是" unCheckedChildren="否" />
             </Form.Item>
+          )}
+
+          {/* 其他字段：默认值支持 3 种模式（自定义 / 数据联动 / 公式编辑） */}
+          {field.type !== "user" &&
+            field.type !== "department" &&
+            field.type !== "date" &&
+            field.type !== "datetime" &&
+            field.type !== FieldTypeEnum.Enum.boolean && (
+            <>
+              <Form.Item
+                label="默认值"
+                name={["advanced", "defaultMode"]}
+                initialValue={field.advanced?.defaultMode || "custom"}
+              >
+                <Select>
+                  <Select.Option value="custom">自定义</Select.Option>
+                  <Select.Option value="dataLink">数据联动</Select.Option>
+                  <Select.Option value="formulaEdit">公式编辑</Select.Option>
+                </Select>
+              </Form.Item>
+              <Form.Item
+                noStyle
+                shouldUpdate={(prev, curr) =>
+                  prev.advanced?.defaultMode !== curr.advanced?.defaultMode
+                }
+              >
+                {({ getFieldValue }) => {
+                  const mode = getFieldValue(["advanced", "defaultMode"]) || "custom";
+                  if (mode === "dataLink") {
+                    return (
+                      <Form.Item>
+                        <Button block type="default">
+                          数据联动设置
+                        </Button>
+                      </Form.Item>
+                    );
+                  }
+                  if (mode === "formulaEdit") {
+                    return (
+                      <Form.Item>
+                        <Button
+                          block
+                          type="default"
+                          icon={<CalculatorOutlined />}
+                          onClick={() => setFormulaDefaultModalOpen(true)}
+                        >
+                          fx 编辑公式
+                        </Button>
+                      </Form.Item>
+                    );
+                  }
+                  // custom
+                  if (field.type === FieldTypeEnum.Enum.number) {
+                    return (
+                      <Form.Item label="默认值" name="defaultValue">
+                        <InputNumber style={{ width: "100%" }} placeholder="请输入默认值" />
+                      </Form.Item>
+                    );
+                  }
+                  return (
+                    <Form.Item label="默认值" name="defaultValue">
+                      <Input placeholder="请输入默认值" />
+                    </Form.Item>
+                  );
+                }}
+              </Form.Item>
+            </>
           )}
         </>
       )}
@@ -481,28 +918,53 @@ const FieldPropertiesPanel = ({
     </div>
   ) : null;
 
-  if (isSerialField) {
-    return (
-      <Tabs
-        activeKey={fieldTab}
-        onChange={setFieldTab}
-        items={[
-          {
-            key: "basic",
-            label: "属性",
-            children: basicForm,
-          },
-          {
-            key: "advanced",
-            label: "高级",
-            children: advancedForm,
-          },
-        ]}
-      />
-    );
-  }
+  const formulaDefaultInitial =
+    typeof field.advanced?.defaultFormulaExpression === "string"
+      ? field.advanced.defaultFormulaExpression
+      : "";
 
-  return basicForm;
+  return (
+    <>
+      {isSerialField ? (
+        <Tabs
+          activeKey={fieldTab}
+          onChange={setFieldTab}
+          items={[
+            {
+              key: "basic",
+              label: "属性",
+              children: basicForm,
+            },
+            {
+              key: "advanced",
+              label: "高级",
+              children: advancedForm,
+            },
+          ]}
+        />
+      ) : (
+        basicForm
+      )}
+      <FormulaDefaultEditorModal
+        open={formulaDefaultModalOpen}
+        onCancel={() => setFormulaDefaultModalOpen(false)}
+        onConfirm={(expression) => {
+          const prevAdv = form.getFieldValue("advanced") || field.advanced || {};
+          const nextAdvanced = {
+            ...prevAdv,
+            defaultFormulaExpression: expression,
+          };
+          form.setFieldsValue({ advanced: nextAdvanced });
+          onValuesChange({ advanced: nextAdvanced });
+          setFormulaDefaultModalOpen(false);
+        }}
+        initialExpression={formulaDefaultInitial}
+        formSchema={formSchema}
+        excludeFieldId={field.fieldId}
+        valueKind={field.type === FieldTypeEnum.Enum.number ? "number" : "text"}
+      />
+    </>
+  );
 };
 
 // 子表字段配置面板
@@ -519,6 +981,8 @@ const SubtableFieldsConfigPanel = ({
   const [form] = Form.useForm();
   const [searchParams] = useSearchParams();
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const selectSubtableField = useFormDesignerStore((s) => s.selectSubtableField);
+  const selectedSubtableField = useFormDesignerStore((s) => s.selectedSubtableField);
   const appId = searchParams.get("appId");
   const applicationId = useFormDesignerStore((state) => state.applicationId);
   const finalAppId = appId || applicationId;
@@ -584,6 +1048,15 @@ const SubtableFieldsConfigPanel = ({
       setSubtableFields(field.subtableFields);
     }
   }, [field.subtableFields]);
+
+  // 支持：从字段库拖拽到子表面板（快速添加子表列）
+  const { setNodeRef: setSubtableDropRef, isOver: isSubtableDropOver } = useDroppable({
+    id: `subtable-${field.fieldId}-drop`,
+    data: {
+      type: "subtable-drop",
+      subtableFieldId: field.fieldId,
+    },
+  });
 
   const handleAddField = () => {
     setEditingField(null);
@@ -678,6 +1151,9 @@ const SubtableFieldsConfigPanel = ({
 
       // 清理内部字段，避免存储冗余
       delete (newField as any).fieldMappingPairs;
+      if (values.type === "boolean") {
+        delete (newField as any).options;
+      }
 
       let newFields;
       if (editingField) {
@@ -698,85 +1174,92 @@ const SubtableFieldsConfigPanel = ({
   return (
     <>
       <Form.Item label="子表字段">
-        <div style={{ marginBottom: 8 }}>
-          <Button type="dashed" block onClick={handleAddField}>
-            + 添加字段
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 8,
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            字段
+          </Typography.Text>
+          <Button type="text" size="small" icon={<PlusOutlined />} onClick={handleAddField}>
+            添加字段
           </Button>
         </div>
-        {subtableFields.length === 0 ? (
-          <Alert
-            message="暂无字段"
-            description="点击上方按钮添加子表字段"
-            type="info"
-            showIcon
-          />
-        ) : (
-          <div style={{ 
-            border: "1px solid #d9d9d9", 
+        <div
+          ref={setSubtableDropRef}
+          className={styles.subtableFieldsDrop}
+          style={{
+            border: isSubtableDropOver ? "2px dashed #1890ff" : "none",
             borderRadius: 4,
             maxHeight: 300,
-            overflow: "auto"
-          }}>
-            {subtableFields.map((subField: any, index: number) => (
-              <div
-                key={subField.fieldId}
-                draggable
-                onDragStart={() => handleDragStart(index)}
-                onDragOver={handleDragOver}
-                onDrop={() => handleDrop(index)}
-                style={{
-                  padding: "6px 10px",
-                  borderBottom: index < subtableFields.length - 1 ? "1px solid #f0f0f0" : "none",
-                  display: "grid",
-                  gridTemplateColumns: "20px 1fr auto auto",
-                  columnGap: 8,
-                  alignItems: "center",
-                  cursor: "grab",
-                  transition: "background-color 0.2s",
-                  background: draggingIndex === index ? "#f5f5f5" : "transparent",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "#fafafa";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "transparent";
-                }}
-                onClick={() => handleEditField(subField)}
-              >
-                <div style={{ color: "#bfbfbf", userSelect: "none", textAlign: "center" }}>⋮⋮</div>
-                <Space>
-                  <span style={{ color: "#999", fontSize: 12 }}>{index + 1}.</span>
-                  <span style={{ fontWeight: 500, maxWidth: 160, display: "inline-block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {subField.label}
-                  </span>
-                </Space>
-                <Space onClick={(e) => e.stopPropagation()} size={4}>
-                  <Button
-                    type="link"
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditField(subField);
+            overflow: "auto",
+            padding: subtableFields.length === 0 ? 8 : 0,
+            background: "#fff",
+          }}
+        >
+          {subtableFields.length === 0 ? (
+            <Alert
+              message="暂无字段"
+              description="可以从左侧字段库拖拽添加，或点击上方按钮添加"
+              type="info"
+              showIcon
+            />
+          ) : (
+            <div style={{ padding: 4 }}>
+              {subtableFields.map((sf: any, idx: number) => {
+                const active =
+                  selectedSubtableField?.parentFieldId === field.fieldId &&
+                  selectedSubtableField?.subFieldId === sf.fieldId;
+                return (
+                  <div
+                    key={sf.fieldId}
+                    className={styles.subtableFieldItem}
+                    draggable
+                    onDragStart={() => handleDragStart(idx)}
+                    onDragOver={handleDragOver}
+                    onDrop={() => handleDrop(idx)}
+                    onClick={() => selectSubtableField(field.fieldId, sf.fieldId)}
+                    style={{
+                      background: active ? "#f0f7ff" : "transparent",
+                      border: active ? "1px solid #1890ff" : "1px solid transparent",
                     }}
                   >
-                    编辑
-                  </Button>
-                  <Button
-                    type="link"
-                    size="small"
-                    danger
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteField(subField.fieldId);
-                    }}
-                  >
-                    删除
-                  </Button>
-                </Space>
+                    <div className={styles.subtableFieldDrag}>
+                      <HolderOutlined />
+                    </div>
+                    <div className={styles.subtableFieldLabel} title={sf?.label || sf?.fieldId}>
+                      {sf?.label || sf?.fieldId}
+                    </div>
+                    <div className={styles.subtableFieldActions} onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleEditField(sf)}
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => handleDeleteField(sf.fieldId)}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ padding: "6px 0" }}>
+                <Button type="dashed" block icon={<PlusOutlined />} onClick={handleAddField}>
+                  添加字段
+                </Button>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </Form.Item>
 
       <Modal
@@ -804,6 +1287,7 @@ const SubtableFieldsConfigPanel = ({
               <Select.Option value="select">下拉框</Select.Option>
               <Select.Option value="radio">单选框</Select.Option>
               <Select.Option value="checkbox">复选框</Select.Option>
+              <Select.Option value="boolean">是/否（开关）</Select.Option>
               <Select.Option value="formula">公式字段</Select.Option>
               <Select.Option value="relatedForm">关联表单</Select.Option>
               <Select.Option value="relatedFormMulti">关联表单（多选）</Select.Option>

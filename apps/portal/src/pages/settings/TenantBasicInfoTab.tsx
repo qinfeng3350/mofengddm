@@ -56,7 +56,7 @@ export const TenantBasicInfoTab = () => {
     {
       title: "表单数量",
       value: formsCount,
-      capLine: null as string | null,
+      capLine: formatCap(formsCount, limits.maxForms),
       icon: <FileTextOutlined style={{ fontSize: 28, color: "#1677ff" }} />,
       desc: "当前租户下已创建的表单定义数量",
     },

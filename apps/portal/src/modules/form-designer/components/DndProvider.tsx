@@ -12,6 +12,7 @@ interface DndProviderProps {
 export const FormDesignerDndProvider = ({ children }: DndProviderProps) => {
   const addField = useFormDesignerStore((state) => state.addField);
   const addContainer = useFormDesignerStore((state) => state.addContainer);
+  const updateField = useFormDesignerStore((state) => state.updateField);
   const moveField = useFormDesignerStore((state) => state.moveField);
   const fields = useFormDesignerStore((state) => state.formSchema.fields);
 
@@ -41,6 +42,43 @@ export const FormDesignerDndProvider = ({ children }: DndProviderProps) => {
     if (active.data.current?.type === "field-library") {
       const fieldData = active.data.current.field;
       const overData = over.data.current;
+
+      // 从字段库拖拽到子表字段配置面板：添加子表列
+      if (overData?.type === "subtable-drop" && overData.subtableFieldId && fieldData) {
+        const subtableFieldId = String(overData.subtableFieldId);
+
+        // 在 schema（可能包含 container children）里查找该 subtable 字段
+        const findFieldById = (items: any[]): any | null => {
+          for (const it of items || []) {
+            if (!it) continue;
+            if ("fieldId" in it && it.fieldId === subtableFieldId) return it;
+            const children = (it as any).children;
+            if (Array.isArray(children)) {
+              const found = findFieldById(children);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+
+        const rootItems = formSchema.elements || formSchema.fields || [];
+        const target = findFieldById(rootItems as any[]);
+        const currentSubtableFields: any[] = target?.subtableFields || [];
+
+        const newSubtableField: any = {
+          fieldId: `subfield_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          label: fieldData.label ?? "未命名字段",
+          required: false,
+          visible: true,
+          editable: true,
+          type: fieldData.type,
+          ...fieldData.defaultConfig,
+        };
+
+        const nextSubtableFields = [...currentSubtableFields, newSubtableField];
+        updateField(subtableFieldId, { subtableFields: nextSubtableFields } as any);
+        return;
+      }
 
       // 检查是否拖到容器内
       if (overData?.type === "container-drop" || overData?.type === "container-column-drop" || overData?.type === "container-tab-drop") {

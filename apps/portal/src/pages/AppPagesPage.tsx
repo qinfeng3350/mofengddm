@@ -86,12 +86,11 @@ export const AppPagesPage = () => {
       },
     },
     {
-      icon: <DashboardOutlined style={{ fontSize: 32, color: "#52c41a" }} />,
-      title: "新建仪表盘",
-      desc: "数据统计、分析及可视化呈现",
+      icon: <ThunderboltOutlined style={{ fontSize: 32, color: "#722ed1" }} />,
+      title: "开发者页面",
+      desc: "用代码/配置创建自定义报表与填写页",
       onClick: () => {
-        // TODO: 仪表盘设计器
-        message.info("仪表盘功能开发中");
+        navigate(`/app/${appId}/developer`);
       },
     },
     {

@@ -18,6 +18,7 @@ import { DepartmentModule } from './modules/department/department.module';
 import { OperationLogModule } from './modules/operation-log/operation-log.module';
 import { TenantMetricsModule } from './modules/tenant-metrics/tenant-metrics.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { LicensingModule } from './modules/licensing/licensing.module';
 import {
   TenantEntity,
   UserEntity,
@@ -103,6 +104,7 @@ import {
     OperationLogModule,
     TenantMetricsModule,
     UploadModule,
+    LicensingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

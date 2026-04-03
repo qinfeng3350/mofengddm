@@ -1,5 +1,6 @@
 import { memo, useMemo, useCallback } from "react";
-import { Form, Input, InputNumber, DatePicker, Select, Radio, Checkbox, Upload, Button, Table, Space, Typography } from "antd";
+import { Form, Input, InputNumber, DatePicker, Select, Radio, Checkbox, Switch, Upload, Button, Table, Space, Typography } from "antd";
+import { useDroppable } from "@dnd-kit/core";
 import {
   UploadOutlined,
   UserOutlined,
@@ -7,6 +8,7 @@ import {
   DeleteOutlined,
   CopyOutlined,
   PlusOutlined,
+  InboxOutlined,
 } from "@ant-design/icons";
 import type { FormFieldSchema } from "@mofeng/shared-schema";
 import { UserSelector } from "@/components/UserSelector";
@@ -41,26 +43,19 @@ const FieldContainer = memo(({
     <div
       onClick={onSelect}
       style={{
-        padding: "8px 10px",
-        border: isSelected ? "1px solid #1890ff" : "1px solid #e8e8e8",
+        padding: "8px 0",
+        border: isSelected ? "1px solid #1890ff" : "none",
         borderRadius: 4,
-        backgroundColor: isSelected ? "#f0f7ff" : "#fafafa",
+        backgroundColor: "transparent",
         position: "relative",
         cursor: "pointer",
-        transition: "all 0.15s ease",
         marginBottom: 6,
       }}
       onMouseEnter={(e) => {
-        if (!isSelected) {
-          e.currentTarget.style.borderColor = "#d9d9d9";
-          e.currentTarget.style.backgroundColor = "#f5f5f5";
-        }
+        // 非选中态不做任何 hover 背景/边框变化，保持干净
       }}
       onMouseLeave={(e) => {
-        if (!isSelected) {
-          e.currentTarget.style.borderColor = "#e8e8e8";
-          e.currentTarget.style.backgroundColor = "#fafafa";
-        }
+        // 非选中态不做任何 hover 背景/边框变化，保持干净
       }}
     >
       <div style={{ marginBottom: 6, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -117,8 +112,20 @@ FieldContainer.displayName = "FieldContainer";
 export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldRendererProps) => {
   const { user } = useAuthStore();
   const selectField = useFormDesignerStore((state) => state.selectField);
+  const selectSubtableField = useFormDesignerStore((state) => state.selectSubtableField);
+  const selectedSubtableField = useFormDesignerStore((state) => state.selectedSubtableField);
   const removeField = useFormDesignerStore((state) => state.removeField);
   const duplicateField = useFormDesignerStore((state) => state.duplicateField);
+
+  // 让画布中子表空状态也可接收“字段库拖拽 -> 子表字段添加”（与 DndProvider 的 subtable-drop 协议一致）
+  const { setNodeRef: setSubtableCanvasDropRef, isOver: isSubtableCanvasDropOver } = useDroppable({
+    id: `subtable-canvas-${field.fieldId}-drop`,
+    data:
+      field.type === "subtable"
+        ? { type: "subtable-drop", subtableFieldId: field.fieldId }
+        : { type: "noop" },
+  });
+
   const status = field.status || "normal";
   const isHidden = status === "hidden" || field.visible === false;
   const isDisabled = status === "disabled" || field.editable === false;
@@ -162,7 +169,7 @@ export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldR
             placeholder={field.placeholder || "请输入"}
             disabled={isDisabled}
             readOnly={isReadOnly}
-            style={{ border: "none", background: "transparent", padding: 0, boxShadow: "none" }}
+            style={{ width: "100%" }}
           />
         );
 
@@ -182,15 +189,16 @@ export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldR
           <InputNumber
             placeholder={field.placeholder || "请输入"}
             disabled={isDisabled}
-            style={{ width: "100%", border: "none", background: "transparent" }}
-            controls={false}
+            style={{ width: "100%" }}
           />
         );
 
       case "date":
         const dateFormat = (field.advanced?.dateFormat as string) || "YYYY-MM-DD";
+        const datePickerMode = /D/.test(dateFormat) ? "date" : /M/.test(dateFormat) ? "month" : "year";
         return (
           <DatePicker
+            picker={datePickerMode as any}
             format={dateFormat}
             placeholder={field.placeholder || dateFormat.replace(/Y/g, "年").replace(/M/g, "月").replace(/D/g, "日")}
             disabled={isDisabled}
@@ -200,9 +208,12 @@ export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldR
 
       case "datetime":
         const dateTimeFormat = (field.advanced?.dateFormat as string) || "YYYY-MM-DD HH:mm:ss";
+        const dateTimePickerMode = /D/.test(dateTimeFormat) ? "date" : /M/.test(dateTimeFormat) ? "month" : "year";
+        const showTime = /H|m|s/.test(dateTimeFormat);
         return (
           <DatePicker
-            showTime
+            picker={dateTimePickerMode as any}
+            showTime={showTime}
             format={dateTimeFormat}
             placeholder={field.placeholder || dateTimeFormat}
             disabled={isDisabled}
@@ -231,6 +242,16 @@ export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldR
               label: opt.label,
               value: String(opt.value),
             }))}
+          />
+        );
+
+      case "boolean":
+        return (
+          <Switch
+            checkedChildren="是"
+            unCheckedChildren="否"
+            disabled={isDisabled}
+            defaultChecked
           />
         );
 
@@ -316,21 +337,143 @@ export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldR
         );
 
       case "attachment":
+        const pictureMode =
+          field.label?.includes("图") || field.advanced?.listType === "picture";
         return (
-          <Upload disabled={isDisabled} beforeUpload={() => false}>
-            <Button icon={<UploadOutlined />} disabled={isDisabled} size="small">
-              选择文件
-            </Button>
-          </Upload>
+          <Upload.Dragger
+            disabled={isDisabled}
+            beforeUpload={() => false}
+            style={{
+              background: "#fff",
+              borderRadius: 4,
+              border: "1px dashed #d9d9d9",
+              padding: 8,
+            }}
+          >
+            {pictureMode ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <UploadOutlined style={{ fontSize: 20, color: "#666" }} />
+                <div style={{ marginTop: 6, color: "#666", fontSize: 12 }}>手机扫码上传</div>
+                <div style={{ marginTop: 8 }}>
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<PlusOutlined />}
+                    style={{ paddingLeft: 0, paddingRight: 0 }}
+                    disabled
+                  >
+                    选择
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <InboxOutlined style={{ fontSize: 18, color: "#666" }} />
+                <div style={{ marginTop: 6, color: "#666", fontSize: 12 }}>点击或拖拽附件上传</div>
+              </div>
+            )}
+          </Upload.Dragger>
         );
 
       case "subtable":
         const subtableFields = (field as any).subtableFields || [];
+        if (!subtableFields.length) {
+          return (
+            <div
+              ref={setSubtableCanvasDropRef}
+              style={{
+                border: isSubtableCanvasDropOver ? "2px dashed #1890ff" : "1px dashed #d9d9d9",
+                borderRadius: 4,
+                background: "#fff",
+                width: "100%",
+                overflowX: "auto",
+              }}
+            >
+              <Table
+                columns={[
+                  {
+                    title: "序号",
+                    dataIndex: "index",
+                    key: "index",
+                    width: 60,
+                    render: (_: any, __: any, index: number) => index + 1,
+                  },
+                  {
+                    title: "",
+                    key: "__placeholder__",
+                    width: 260,
+                    render: () => (
+                      <Input
+                        size="small"
+                        disabled
+                        readOnly
+                        placeholder="从左侧拖拽来添加字段"
+                        style={{
+                          background: "#fff",
+                          border: "1px solid #f0f0f0",
+                        }}
+                      />
+                    ),
+                  },
+                ]}
+                dataSource={[{ key: "1", index: 1 }]}
+                pagination={false}
+                size="small"
+                showHeader={false}
+                scroll={{ x: 320 }}
+                style={{ background: "#fff", width: "100%" }}
+              />
+            </div>
+          );
+        }
         const columns = subtableFields.map((subField: any) => ({
-          title: subField.label,
+          title: (
+            <div
+              style={{
+                cursor: "pointer",
+                userSelect: "none",
+                fontWeight:
+                  selectedSubtableField?.parentFieldId === field.fieldId &&
+                  selectedSubtableField?.subFieldId === subField.fieldId
+                    ? 600
+                    : 400,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                selectSubtableField(field.fieldId, subField.fieldId);
+              }}
+            >
+              {subField.label}
+            </div>
+          ),
           dataIndex: subField.fieldId,
           key: subField.fieldId,
-          render: () => <Input placeholder="请输入" disabled size="small" />,
+          render: () => {
+            const active =
+              selectedSubtableField?.parentFieldId === field.fieldId &&
+              selectedSubtableField?.subFieldId === subField.fieldId;
+            return (
+              <div
+                style={{
+                  cursor: "pointer",
+                  outline: active ? "1px dashed #1677ff" : "none",
+                  outlineOffset: 2,
+                  borderRadius: 2,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  selectSubtableField(field.fieldId, subField.fieldId);
+                }}
+              >
+                <Input
+                  placeholder="请输入"
+                  readOnly
+                  size="small"
+                  style={{ background: "#fff" }}
+                />
+              </div>
+            );
+          },
         }));
         columns.unshift({
           title: "序号",
@@ -340,18 +483,22 @@ export const DesignerFieldRenderer = memo(({ field, isSelected }: DesignerFieldR
           render: (_: any, __: any, index: number) => index + 1,
         });
         return (
-          <div style={{ border: "1px solid #f0f0f0", borderRadius: 4 }}>
+          <div
+            style={{
+              border: "none",
+              borderRadius: 4,
+              background: "#fff",
+              width: "100%",
+              overflowX: "auto",
+            }}
+          >
             <Table
               columns={columns}
               dataSource={[{ key: "1" }]}
               pagination={false}
               size="small"
               scroll={{ x: "max-content" }}
-              footer={() => (
-                <Button type="dashed" block icon={<PlusOutlined />} disabled size="small" style={{ margin: 0 }}>
-                  添加行
-                </Button>
-              )}
+              style={{ background: "#fff", width: "100%" }}
             />
           </div>
         );

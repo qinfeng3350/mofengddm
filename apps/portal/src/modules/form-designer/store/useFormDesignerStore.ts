@@ -8,6 +8,7 @@ type DesignerState = {
   formSchema: FormSchemaType;
   selectedFieldId?: string;
   selectedContainerId?: string;
+  selectedSubtableField?: { parentFieldId: string; subFieldId: string };
   applicationId?: string;
   isLoading: boolean;
   isSaving: boolean;
@@ -17,6 +18,7 @@ type DesignerState = {
   addContainer: (containerType: "groupTitle" | "multiColumn" | "tab", label: string, config?: Record<string, unknown>) => void;
   selectField: (fieldId?: string) => void;
   selectContainer: (containerId?: string) => void;
+  selectSubtableField: (parentFieldId: string, subFieldId: string) => void;
   updateField: (fieldId: string, updates: Partial<FormFieldSchema>) => void;
   updateContainer: (containerId: string, updates: Partial<LayoutContainerSchemaType>) => void;
   duplicateField: (fieldId: string) => void;
@@ -52,6 +54,8 @@ const initialSchema: FormSchemaType = {
 export const useFormDesignerStore = create<DesignerState>((set, get) => ({
   formSchema: FormSchema.parse(initialSchema),
   selectedFieldId: undefined,
+  selectedContainerId: undefined,
+  selectedSubtableField: undefined,
   applicationId: undefined,
   isLoading: false,
   isSaving: false,
@@ -89,6 +93,7 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
         },
         selectedFieldId: fieldId,
         selectedContainerId: undefined,
+        selectedSubtableField: undefined,
       };
     }),
   addContainer: (containerType, label, config) =>
@@ -113,23 +118,48 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
         },
         selectedContainerId: containerId,
         selectedFieldId: undefined,
+        selectedSubtableField: undefined,
       };
     }),
-  selectField: (fieldId) => set({ selectedFieldId: fieldId, selectedContainerId: undefined }),
-  selectContainer: (containerId) => set({ selectedContainerId: containerId, selectedFieldId: undefined }),
+  selectField: (fieldId) =>
+    set({
+      selectedFieldId: fieldId,
+      selectedContainerId: undefined,
+      selectedSubtableField: undefined,
+    }),
+  selectContainer: (containerId) =>
+    set({
+      selectedContainerId: containerId,
+      selectedFieldId: undefined,
+      selectedSubtableField: undefined,
+    }),
+  selectSubtableField: (parentFieldId, subFieldId) =>
+    set({
+      selectedFieldId: undefined,
+      selectedContainerId: undefined,
+      selectedSubtableField: { parentFieldId, subFieldId },
+    }),
   updateField: (fieldId, updates) =>
     set((state) => {
+      const mergeFieldPatch = (f: any, patch: Record<string, unknown>) => {
+        const next = { ...f, ...patch } as any;
+        if (patch.advanced && typeof patch.advanced === "object" && !Array.isArray(patch.advanced)) {
+          next.advanced = { ...(f.advanced || {}), ...(patch.advanced as object) };
+        }
+        return next;
+      };
+
       // 更新fields数组
       const newFields = state.formSchema.fields.map((f) =>
-        f.fieldId === fieldId ? { ...f, ...updates } : f
+        f.fieldId === fieldId ? mergeFieldPatch(f, updates as Record<string, unknown>) : f
       );
-      
+
       // 递归更新elements数组中的字段（包括嵌套在容器中的字段）
       const updateFieldInElements = (elements: any[]): any[] => {
         return elements.map((el: any) => {
           if ('fieldId' in el && el.fieldId === fieldId) {
             // 找到匹配的字段，更新它
-            return { ...el, ...updates };
+            return mergeFieldPatch(el, updates as Record<string, unknown>);
           } else if ('containerId' in el && el.children && Array.isArray(el.children)) {
             // 如果是容器，递归更新其children
             return {
@@ -272,6 +302,10 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
         },
         selectedFieldId:
           state.selectedFieldId === fieldId ? undefined : state.selectedFieldId,
+        selectedSubtableField:
+          state.selectedSubtableField?.parentFieldId === fieldId
+            ? undefined
+            : state.selectedSubtableField,
       };
     }),
   removeContainer: (containerId) =>
@@ -303,20 +337,65 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
         },
       };
     }),
-  moveField: (fromIndex, toIndex) =>
+  moveField: (fromIndex, toIndex) => // sortable reorder
     set((state) => {
       const fields = [...state.formSchema.fields];
+      if (fromIndex === toIndex) return state;
+      if (fromIndex < 0 || fromIndex >= fields.length) return state;
+      if (toIndex < 0 || toIndex >= fields.length) return state;
+
       const [moved] = fields.splice(fromIndex, 1);
       fields.splice(toIndex, 0, moved);
+
       // 更新布局坐标
       const updatedFields = fields.map((f, idx) => ({
         ...f,
         layout: { ...f.layout, y: idx },
       }));
+
+      // 如果当前使用了 elements（容器结构），则 moveField 必须同步更新 elements
+      const elements = state.formSchema.elements;
+      if (!elements?.length) {
+        return {
+          formSchema: {
+            ...state.formSchema,
+            fields: updatedFields,
+          },
+        };
+      }
+
+      // 更新顶层 elements 中字段元素的相对顺序（容器位置不变）
+      const updatedFieldMap = new Map(updatedFields.map((f) => [f.fieldId, f]));
+      const fieldElementsInOrder = elements
+        .filter((el: any) => el && "fieldId" in el)
+        .map((el: any) => {
+          const updated = updatedFieldMap.get(el.fieldId);
+          return updated ? { ...el, ...updated } : el;
+        });
+
+      // 将 updatedFields 顺序映射回顶层 field elements
+      const nextFieldQueue = updatedFields
+        .map((f) => {
+          const found = fieldElementsInOrder.find((el: any) => el.fieldId === f.fieldId);
+          return found || updatedFieldMap.get(f.fieldId);
+        })
+        .filter(Boolean);
+
+      let cursor = 0;
+      const nextElements = elements.map((el: any) => {
+        if (el && "fieldId" in el) {
+          const replacement = nextFieldQueue[cursor];
+          cursor += 1;
+          return replacement ? replacement : el;
+        }
+        return el;
+      });
+
       return {
         formSchema: {
           ...state.formSchema,
           fields: updatedFields,
+          elements: nextElements,
         },
       };
     }),
@@ -413,6 +492,8 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
       set({
         formSchema: parsedSchema,
         selectedFieldId: undefined,
+        selectedContainerId: undefined,
+        selectedSubtableField: undefined,
       });
     } catch (error) {
       console.error("加载表单失败:", error);

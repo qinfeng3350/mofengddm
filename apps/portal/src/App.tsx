@@ -22,6 +22,7 @@ import { DataVDesignerPage } from "@/pages/DataVDesignerPage";
 import { DataVRuntimePage } from "@/pages/DataVRuntimePage";
 import { BusinessRulePage } from "@/pages/BusinessRulePage";
 import { PrintTemplateDesignerPage } from "@/pages/PrintTemplateDesignerPage";
+import { DeveloperPage } from "@/pages/DeveloperPage";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { WorkflowTasksPage } from "@/pages/WorkflowTasksPage";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -76,6 +77,14 @@ function App() {
         element={
           <ProtectedRoute>
             <AppConfigPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/:appId/developer"
+        element={
+          <ProtectedRoute>
+            <DeveloperPage />
           </ProtectedRoute>
         }
       />

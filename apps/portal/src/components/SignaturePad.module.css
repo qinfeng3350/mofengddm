@@ -1,0 +1,42 @@
+.wrap {
+  position: relative;
+  width: 100%;
+}
+
+.canvas {
+  width: 100%;
+  height: 150px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  background: #fff;
+  touch-action: none;
+}
+
+.toolbar {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  display: flex;
+  gap: 8px;
+  z-index: 2;
+}
+
+.placeholder {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 52%;
+  transform: translateY(-50%);
+  text-align: center;
+  color: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  font-size: 14px;
+}
+
+.disabledOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(245, 245, 245, 0.35);
+  border-radius: 4px;
+}
+

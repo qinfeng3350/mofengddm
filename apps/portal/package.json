@@ -20,6 +20,7 @@
     "@mofeng/shared-schema": "workspace:*",
     "@tanstack/react-query": "^5.90.11",
     "@types/react-resizable": "^3.0.8",
+    "@vant/area-data": "^2.1.0",
     "ag-grid-community": "^34.3.1",
     "ag-grid-react": "^34.3.1",
     "antd": "^6.0.0",

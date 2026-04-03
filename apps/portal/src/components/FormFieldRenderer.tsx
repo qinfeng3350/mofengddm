@@ -19,6 +19,7 @@ import {
   Empty,
   message,
   Tag,
+  Switch,
 } from "antd";
 import {
   UploadOutlined,
@@ -45,6 +46,12 @@ import { formDefinitionApi } from "@/api/formDefinition";
 import { formDataApi, type FormDataResponse } from "@/api/formData";
 import { extractAttachmentPreviewUrls } from "@/utils/attachmentDisplay";
 import { AttachmentUpload } from "./AttachmentUpload";
+import { SignaturePad } from "./SignaturePad";
+import {
+  evaluateFormulaExpression,
+  formulaDependencyWatchKey,
+  stringifyFormulaResult,
+} from "@/utils/formulaEngine";
 
 interface FormFieldRendererProps {
   field: FormFieldSchema;
@@ -57,6 +64,46 @@ interface FormFieldRendererProps {
 export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, formSchema }: FormFieldRendererProps) => {
   const { user } = useAuthStore();
   const isDisabled = disabled || !field.editable;
+
+  const getDatePickerMode = (format: string): "date" | "month" | "year" => {
+    // 约定：包含 D 代表选择到日；不包含 D 但包含 M 代表选择到月；否则选择到年
+    if (/D/.test(format)) return "date";
+    if (/M/.test(format)) return "month";
+    return "year";
+  };
+
+  const hasTimePart = (format: string): boolean => /H|m|s/.test(format);
+
+  const getNumberFormat = (f: any) => {
+    const nf = f?.advanced?.numberFormat || {};
+    const keepDecimals = nf.keepDecimals !== false; // 默认 true
+    const decimalPlaces =
+      typeof nf.decimalPlaces === "number"
+        ? nf.decimalPlaces
+        : typeof f?.validation?.precision === "number"
+          ? f.validation.precision
+          : 2;
+    const noRounding = nf.noRounding === true;
+    const thousandSeparator = nf.thousandSeparator === true;
+    const unit = typeof nf.unit === "string" ? nf.unit : "";
+    return { keepDecimals, decimalPlaces, noRounding, thousandSeparator, unit };
+  };
+
+  const truncateDecimals = (raw: string, places: number) => {
+    const s = raw.trim();
+    if (!s) return s;
+    const neg = s.startsWith("-") ? "-" : "";
+    const body = neg ? s.slice(1) : s;
+    const [i, d = ""] = body.split(".");
+    if (places <= 0) return `${neg}${i}`;
+    return `${neg}${i}.${d.slice(0, places)}`;
+  };
+
+  const addThousandsSep = (s: string) => {
+    const [i, d] = s.split(".");
+    const ii = i.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return d != null && d !== "" ? `${ii}.${d}` : ii;
+  };
   
   // 尝试获取 form context，如果没有则使用 control 的方法
   let setValue: (name: string, value: any) => void;
@@ -75,6 +122,24 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
     };
     getValues = () => (control ? control._formValues || {} : {});
   }
+
+  const defaultFormulaExpr =
+    field.advanced?.defaultMode === "formulaEdit" &&
+    typeof field.advanced?.defaultFormulaExpression === "string"
+      ? field.advanced.defaultFormulaExpression.trim()
+      : "";
+
+  const defaultFormulaDepsKey = useMemo(
+    () =>
+      defaultFormulaExpr
+        ? formulaDependencyWatchKey(
+            defaultFormulaExpr,
+            formValues as Record<string, unknown>,
+            formSchema
+          )
+        : "",
+    [defaultFormulaExpr, formValues, formSchema]
+  );
 
   // 应用动态默认值（当前登录人 / 当前时间 等）
   useEffect(() => {
@@ -97,6 +162,31 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
       return;
     }
   }, [field, user, getValues, setValue]);
+
+  // 公式编辑型默认值：随依赖字段变化重算
+  useEffect(() => {
+    if (!defaultFormulaExpr) return;
+    let computed: unknown;
+    try {
+      computed = evaluateFormulaExpression(
+        defaultFormulaExpr,
+        formValues as Record<string, unknown>,
+        formSchema
+      );
+    } catch {
+      return;
+    }
+    const cur = getValues()[field.fieldId];
+    const forNum = field.type === "number";
+    const nextStr = stringifyFormulaResult(computed, forNum);
+    const curStr = cur == null || cur === "" ? "" : String(cur);
+    if (curStr === nextStr) return;
+    if (forNum) {
+      setValue(field.fieldId, nextStr === "" ? null : nextStr);
+    } else {
+      setValue(field.fieldId, computed ?? "");
+    }
+  }, [defaultFormulaExpr, defaultFormulaDepsKey, field.fieldId, field.type, getValues, setValue]);
 
   const renderField = () => {
     switch (field.type) {
@@ -237,6 +327,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
         );
 
       case "number":
+        const nf = getNumberFormat(field);
         return (
           <Controller
             name={field.fieldId}
@@ -265,10 +356,38 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               >
                 <InputNumber
                   {...formField}
+                  stringMode
                   placeholder={field.placeholder}
                   disabled={isDisabled}
                   style={{ width: "100%" }}
-                  precision={field.validation?.precision}
+                  precision={nf.keepDecimals && !nf.noRounding ? nf.decimalPlaces : undefined}
+                  addonAfter={nf.unit || undefined}
+                  formatter={(v) => {
+                    if (v == null || v === "") return "";
+                    const raw = String(v);
+                    const cleaned = raw.replace(/,/g, "");
+                    const normalized = nf.keepDecimals ? cleaned : cleaned;
+                    return nf.thousandSeparator ? addThousandsSep(normalized) : normalized;
+                  }}
+                  parser={(v) => {
+                    const raw = String(v ?? "");
+                    const noUnit = nf.unit ? raw.replace(new RegExp(`\\s*${nf.unit}$`), "") : raw;
+                    return noUnit.replace(/,/g, "");
+                  }}
+                  onChange={(val) => {
+                    if (!nf.keepDecimals) {
+                      formField.onChange(val);
+                      return;
+                    }
+                    const raw = val == null ? "" : String(val);
+                    const cleaned = raw.replace(/,/g, "");
+                    if (nf.noRounding) {
+                      const next = truncateDecimals(cleaned, nf.decimalPlaces);
+                      formField.onChange(next === "" ? null : next);
+                      return;
+                    }
+                    formField.onChange(val);
+                  }}
                 />
               </Form.Item>
             )}
@@ -277,6 +396,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
 
       case "date":
         const dateFormat = (field.advanced?.dateFormat as string) || "YYYY-MM-DD";
+        const datePickerMode = getDatePickerMode(dateFormat);
         return (
           <Controller
             name={field.fieldId}
@@ -293,6 +413,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               >
                 <DatePicker
                   {...formField}
+                  picker={datePickerMode}
                   format={dateFormat}
                   value={formField.value ? dayjs(formField.value) : undefined}
                   onChange={(date) => formField.onChange(date ? date.format(dateFormat) : null)}
@@ -362,6 +483,33 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
           />
         );
 
+      case "boolean":
+        return (
+          <Controller
+            name={field.fieldId}
+            control={control}
+            rules={{
+              required: field.required ? `${field.label}是必填项` : false,
+            }}
+            render={({ field: formField, fieldState }) => (
+              <Form.Item
+                label={field.label}
+                required={field.required}
+                validateStatus={fieldState.error ? "error" : ""}
+                help={fieldState.error?.message}
+              >
+                <Switch
+                  checked={formField.value === true}
+                  onChange={(checked) => formField.onChange(checked)}
+                  checkedChildren="是"
+                  unCheckedChildren="否"
+                  disabled={isDisabled}
+                />
+              </Form.Item>
+            )}
+          />
+        );
+
       case "checkbox":
         return (
           <Controller
@@ -392,6 +540,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
 
       case "datetime":
         const dateTimeFormat = (field.advanced?.dateFormat as string) || "YYYY-MM-DD HH:mm:ss";
+        const dateTimePickerMode = getDatePickerMode(dateTimeFormat);
+        const showTime = hasTimePart(dateTimeFormat);
         return (
           <Controller
             name={field.fieldId}
@@ -408,7 +558,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               >
                 <DatePicker
                   {...formField}
-                  showTime
+                  picker={dateTimePickerMode}
+                  showTime={showTime}
                   format={dateTimeFormat}
                   value={formField.value ? dayjs(formField.value) : undefined}
                   onChange={(date) =>
@@ -637,6 +788,76 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
               const [currentPage, setCurrentPage] = useState(1);
               const [pageSize, setPageSize] = useState(10);
+
+              // 子表公式计算与写回：禁止在 cell render 阶段调用 formField.onChange，
+              // 否则会触发 React 报错：
+              // "Cannot update a component (Controller) while rendering a different component (Cell...)"
+              useEffect(() => {
+                if (!subtableFields.length) return;
+                if (!formSchema) return;
+
+                let changed = false;
+                const nextData = Array.isArray(dataSource) ? dataSource.map((r) => ({ ...(r || {}) })) : [];
+
+                subtableFields.forEach((subField: any) => {
+                  if (!subField?.fieldId) return;
+
+                  // A) 子表字段类型为 formula：按行计算并写回
+                  if (subField.type === "formula" && typeof subField.formulaExpression === "string") {
+                    const expression = subField.formulaExpression.trim();
+                    if (!expression) return;
+
+                    for (let rowIndex = 0; rowIndex < nextData.length; rowIndex++) {
+                      const row = nextData[rowIndex] || {};
+                      const contextFormValues: Record<string, unknown> = {
+                        ...(formValues as Record<string, unknown>),
+                        // 子表Id 临时视作当前行对象，保证 {子表Id.列Id} 变成标量
+                        [field.fieldId]: row,
+                        ...row,
+                      };
+                      const result = evaluateFormulaExpression(expression, contextFormValues, formSchema);
+                      const nextValue = stringifyFormulaResult(result, false);
+                      const curValue = row[subField.fieldId];
+                      if (String(curValue ?? "") !== String(nextValue ?? "")) {
+                        row[subField.fieldId] = nextValue;
+                        changed = true;
+                      }
+                    }
+                    return;
+                  }
+
+                  // B) 普通字段：advanced.defaultMode=formulaEdit => 按行计算默认值并写回
+                  const defaultFormulaExpr =
+                    subField?.advanced?.defaultMode === "formulaEdit" &&
+                    typeof subField?.advanced?.defaultFormulaExpression === "string"
+                      ? subField.advanced.defaultFormulaExpression.trim()
+                      : "";
+
+                  if (defaultFormulaExpr && subField.type !== "formula") {
+                    for (let rowIndex = 0; rowIndex < nextData.length; rowIndex++) {
+                      const row = nextData[rowIndex] || {};
+                      const contextFormValues: Record<string, unknown> = {
+                        ...(formValues as Record<string, unknown>),
+                        [field.fieldId]: row,
+                        ...row,
+                      };
+                      const result = evaluateFormulaExpression(defaultFormulaExpr, contextFormValues, formSchema);
+                      const forNum = subField.type === "number";
+                      const nextStr = stringifyFormulaResult(result, forNum);
+                      const nextValue = forNum ? (nextStr === "" ? null : nextStr) : nextStr;
+                      const curValue = row[subField.fieldId];
+                      if (String(curValue ?? "") !== String(nextValue ?? "")) {
+                        row[subField.fieldId] = nextValue;
+                        changed = true;
+                      }
+                    }
+                  }
+                });
+
+                if (changed) {
+                  formField.onChange(nextData);
+                }
+              }, [dataSource, subtableFields, formSchema, formValues, field.fieldId, formField]);
               
               // 分页数据
               const startIndex = (currentPage - 1) * pageSize;
@@ -896,11 +1117,47 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   dataIndex: subField.fieldId,
                   key: subField.fieldId,
                   render: (text: any, record: any, index: number) => {
+                    let effectiveText = text;
+
+                    // 子表“公式编辑默认值”（advanced.defaultMode=formulaEdit）：
+                    // 这里需要手动计算并回写当前行，否则子表里的字段不会走 FormFieldRenderer 的公式 useEffect。
+                    const defaultFormulaExpr =
+                      subField?.advanced?.defaultMode === "formulaEdit" &&
+                      typeof subField?.advanced?.defaultFormulaExpression === "string"
+                        ? subField.advanced.defaultFormulaExpression.trim()
+                        : "";
+
+                    if (defaultFormulaExpr && subField.type !== "formula") {
+                      try {
+                        const forNum = subField.type === "number";
+                        // 关键：子表新增行时，watch() 里的 formValues 可能还没同步到最新 dataSource。
+                        // 对“单行公式”而言：UI里引用可能是 {子表Id.列Id}（数组变量），
+                        // 但你希望按“当前行”计算，因此把 formValues[subtableId] 临时覆盖为当前行 record，
+                        // 这样 rawFormValue 会返回标量而不是整列数组。
+                        const contextFormValues: Record<string, unknown> = {
+                          ...(formValues as Record<string, unknown>),
+                          [field.fieldId]: record as Record<string, unknown>,
+                          ...(record as Record<string, unknown>),
+                        };
+                        const result = evaluateFormulaExpression(
+                          defaultFormulaExpr,
+                          contextFormValues,
+                          formSchema
+                        );
+                        const nextStr = stringifyFormulaResult(result, forNum);
+                        const nextValue = forNum ? (nextStr === "" ? null : nextStr) : nextStr;
+
+                        effectiveText = nextValue;
+                      } catch (e) {
+                        console.error("子表默认公式计算错误:", e);
+                      }
+                    }
+
                     switch (subField.type) {
                       case "input":
                         return (
                           <Input
-                            value={text || ""}
+                            value={effectiveText || ""}
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             placeholder="请输入"
                             size="small"
@@ -910,7 +1167,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                       case "textarea":
                         return (
                           <Input.TextArea
-                            value={text || ""}
+                            value={effectiveText || ""}
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             placeholder="请输入"
                             rows={2}
@@ -918,10 +1175,38 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                           />
                         );
                       case "number":
+                        const snf = getNumberFormat(subField);
                         return (
                           <InputNumber
-                            value={text}
-                            onChange={(value) => handleCellChange(value, index, subField.fieldId)}
+                            value={effectiveText}
+                            stringMode
+                            addonAfter={snf.unit || undefined}
+                            precision={snf.keepDecimals && !snf.noRounding ? snf.decimalPlaces : undefined}
+                            formatter={(v) => {
+                              if (v == null || v === "") return "";
+                              const raw = String(v);
+                              const cleaned = raw.replace(/,/g, "");
+                              return snf.thousandSeparator ? addThousandsSep(cleaned) : cleaned;
+                            }}
+                            parser={(v) => {
+                              const raw = String(v ?? "");
+                              const noUnit = snf.unit ? raw.replace(new RegExp(`\\s*${snf.unit}$`), "") : raw;
+                              return noUnit.replace(/,/g, "");
+                            }}
+                            onChange={(value) => {
+                              if (!snf.keepDecimals) {
+                                handleCellChange(value, index, subField.fieldId);
+                                return;
+                              }
+                              const raw = value == null ? "" : String(value);
+                              const cleaned = raw.replace(/,/g, "");
+                              if (snf.noRounding) {
+                                const next = truncateDecimals(cleaned, snf.decimalPlaces);
+                                handleCellChange(next === "" ? null : next, index, subField.fieldId);
+                                return;
+                              }
+                              handleCellChange(value, index, subField.fieldId);
+                            }}
                             placeholder="请输入"
                             size="small"
                             style={{ width: "100%" }}
@@ -929,11 +1214,21 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                           />
                         );
                       case "date":
+                        const sfFormat =
+                          (subField.advanced?.dateFormat as string) || "YYYY-MM-DD";
+                        const sfPicker = getDatePickerMode(sfFormat);
                         return (
                           <DatePicker
-                            value={text ? dayjs(text) : null}
-                            onChange={(date) => handleCellChange(date ? date.format("YYYY-MM-DD") : null, index, subField.fieldId)}
-                            placeholder="年-月-日"
+                            picker={sfPicker}
+                            value={effectiveText ? dayjs(effectiveText) : null}
+                            onChange={(date) =>
+                              handleCellChange(
+                                date ? date.format(sfFormat) : null,
+                                index,
+                                subField.fieldId,
+                              )
+                            }
+                            placeholder={sfFormat}
                             size="small"
                             style={{ width: "100%" }}
                             disabled={isDisabled}
@@ -942,7 +1237,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                       case "select":
                         return (
                           <Select
-                            value={text}
+                            value={effectiveText}
                             onChange={(value) => handleCellChange(value, index, subField.fieldId)}
                             placeholder="请选择"
                             size="small"
@@ -957,7 +1252,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                       case "radio":
                         return (
                           <Radio.Group
-                            value={text}
+                            value={effectiveText}
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             disabled={isDisabled}
                           >
@@ -968,27 +1263,38 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             ))}
                           </Radio.Group>
                         );
+                      case "boolean":
+                        return (
+                          <Switch
+                            checked={effectiveText === true || effectiveText === "true" || effectiveText === 1 || effectiveText === "1"}
+                            onChange={(checked) => handleCellChange(checked, index, subField.fieldId)}
+                            checkedChildren="是"
+                            unCheckedChildren="否"
+                            disabled={isDisabled}
+                            size="small"
+                          />
+                        );
                       case "formula": {
-                        const actualIndex = startIndex + index;
                         const expression = subField.formulaExpression as string | undefined;
-                        const deps: string[] = subField.formulaDependencies || [];
 
                         const calculate = () => {
                           if (!expression) return "";
-                          let expr = expression;
-                          deps.forEach((depFieldId: string) => {
-                            const value = record[depFieldId];
-                            const numValue =
-                              typeof value === "number" ? value : parseFloat(String(value ?? 0));
-                            expr = expr.replace(
-                              new RegExp(`\\{${depFieldId}\\}`, "g"),
-                              isNaN(numValue) ? "0" : String(numValue)
-                            );
-                          });
                           try {
-                            // eslint-disable-next-line no-eval
-                            const result = eval(expr);
-                            return isNaN(result) ? "" : String(result);
+                            const result = evaluateFormulaExpression(
+                              expression,
+                              // 子表公式要能使用“同一行字段”以及“整表/其它字段”的引用：
+                              // - 用 formValues 提供整表上下文（用于 {subtableId.colId} 这种引用）
+                              // - 用 record 覆盖当前行字段（用于 {colId} 这种引用）
+                              {
+                                ...(formValues as Record<string, unknown>),
+                                // 将子表Id临时视作“当前行对象”，使 {subtableId.colId} 在单行公式中变成标量
+                                [field.fieldId]: record as Record<string, unknown>,
+                                ...(record as Record<string, unknown>),
+                              },
+                              formSchema
+                            );
+                            // 公式字段可能返回文本（如 CONCATENATE），不要强制按数字格式化
+                            return stringifyFormulaResult(result, false);
                           } catch (e) {
                             console.error("子表公式计算错误:", e);
                             return "";
@@ -996,17 +1302,6 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                         };
 
                         const formulaValue = calculate();
-
-                        // 把计算结果写回当前行，确保提交时有值
-                        if (record[subField.fieldId] !== formulaValue) {
-                          const newData = [...dataSource];
-                          if (!newData[actualIndex]) newData[actualIndex] = {};
-                          newData[actualIndex] = {
-                            ...newData[actualIndex],
-                            [subField.fieldId]: formulaValue,
-                          };
-                          formField.onChange(newData);
-                        }
 
                         return (
                           <Input
@@ -1023,7 +1318,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                         const currentRow = dataSource[actualIndex] || {};
                         return (
                           <SubtableRelatedCell
-                            value={text}
+                            value={effectiveText}
                             subField={subField}
                             disabled={isDisabled}
                             currentRow={currentRow}
@@ -1047,7 +1342,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                           subField.label?.includes("图") ||
                           subField.advanced?.listType === "picture";
                         if (isDisabled) {
-                          const urls = extractAttachmentPreviewUrls(text);
+                          const urls = extractAttachmentPreviewUrls(effectiveText);
                           return !urls.length ? (
                             <Typography.Text type="secondary">-</Typography.Text>
                           ) : (
@@ -1070,7 +1365,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                         return (
                           <div className="subtable-upload-inline">
                             <AttachmentUpload
-                              value={text}
+                              value={effectiveText}
                               onChange={(v) =>
                                 handleCellChange(v, index, subField.fieldId)
                               }
@@ -1084,7 +1379,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                       default:
                         return (
                           <Input
-                            value={text || ""}
+                            value={effectiveText || ""}
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             placeholder="请输入"
                             size="small"
@@ -1171,14 +1466,22 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                   type="primary"
                                   size="small"
                                   icon={<PlusOutlined />}
-                                  onClick={handleAddRow}
+                                  onClick={() => {
+                                    if (isDisabled) return;
+                                    handleAddRow();
+                                  }}
+                                  disabled={isDisabled}
                                 >
                                   新增
                                 </Button>
                                 <Button
                                   size="small"
                                   icon={<DownloadOutlined />}
-                                  onClick={handleImport}
+                                  onClick={() => {
+                                    if (isDisabled) return;
+                                    handleImport();
+                                  }}
+                                  disabled={isDisabled}
                                 >
                                   导入
                                 </Button>
@@ -1186,8 +1489,11 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                   size="small"
                                   danger
                                   icon={<DeleteOutlined />}
-                                  onClick={handleDeleteRows}
-                                  disabled={selectedRowKeys.length === 0}
+                                  onClick={() => {
+                                    if (isDisabled) return;
+                                    handleDeleteRows();
+                                  }}
+                                  disabled={isDisabled || selectedRowKeys.length === 0}
                                 >
                                   删除
                                 </Button>
@@ -1281,28 +1587,17 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
           />
         );
 
-      case "formula":
-        // 计算公式值
+      case "formula": {
         const calculateFormula = () => {
           if (!field.formulaExpression) return "";
-          
           try {
-            let expression = field.formulaExpression;
-            // 替换字段引用 {fieldId} 为实际值
-            const dependencies = field.formulaDependencies || [];
-            dependencies.forEach((depFieldId: string) => {
-              const value = formValues[depFieldId];
-              const numValue = typeof value === 'number' ? value : parseFloat(String(value || 0));
-              expression = expression.replace(
-                new RegExp(`\\{${depFieldId}\\}`, 'g'),
-                isNaN(numValue) ? '0' : String(numValue)
-              );
-            });
-            
-            // 安全计算表达式（仅支持基本数学运算）
-            // eslint-disable-next-line no-eval
-            const result = eval(expression);
-            return isNaN(result) ? "" : String(result);
+            const result = evaluateFormulaExpression(
+              field.formulaExpression,
+              formValues as Record<string, unknown>,
+              formSchema
+            );
+            // 公式字段可能返回文本（如 CONCATENATE），不要强制按数字格式化
+            return stringifyFormulaResult(result, false);
           } catch (error) {
             console.error("公式计算错误:", error);
             return "";
@@ -1328,6 +1623,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
             )}
           />
         );
+      }
 
       case "serial":
         return (
@@ -1650,30 +1946,12 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 validateStatus={fieldState.error ? "error" : ""}
                 help={fieldState.error?.message}
               >
-                <div
-                  style={{
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 4,
-                    minHeight: 150,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: isDisabled ? "not-allowed" : "pointer",
-                    background: isDisabled ? "#f5f5f5" : "#fff",
-                  }}
-                  onClick={() => {
-                    if (!isDisabled) {
-                      // TODO: 打开手写签名画板
-                      console.log("打开手写签名画板");
-                    }
-                  }}
-                >
-                  {formField.value ? (
-                    <img src={formField.value} alt="签名" style={{ maxWidth: "100%", maxHeight: 150 }} />
-                  ) : (
-                    <Typography.Text type="secondary">点击进行手写签名</Typography.Text>
-                  )}
-                </div>
+                <SignaturePad
+                  value={typeof formField.value === "string" ? formField.value : undefined}
+                  onChange={(next) => formField.onChange(next)}
+                  disabled={isDisabled}
+                  placeholder="手写签名添加签名"
+                />
               </Form.Item>
             )}
           />

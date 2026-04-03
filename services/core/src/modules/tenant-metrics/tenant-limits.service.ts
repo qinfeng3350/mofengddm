@@ -16,6 +16,7 @@ export type TenantLimitsRaw = {
   enabled?: boolean;
   expiresAt?: string;
   maxEnabledUsers?: number;
+  maxForms?: number;
   maxRecords?: number;
 };
 
@@ -89,6 +90,21 @@ export class TenantLimitsService {
       throw new BadRequestException(
         `已达到数据条数上限（${maxRecords}），无法新建记录`,
       );
+    }
+  }
+
+  /**
+   * 新建一条表单定义前检查 maxForms
+   */
+  async assertCanCreateForm(tenantId: string): Promise<void> {
+    const tenant = await this.getTenantOrThrow(tenantId);
+    const meta = this.parseMetadata(tenant.metadata);
+    const maxForms = this.getLimits(meta).maxForms;
+    if (maxForms == null || maxForms <= 0) return;
+
+    const count = await this.formDefinitionRepo.count({ where: { tenantId } });
+    if (count >= maxForms) {
+      throw new BadRequestException(`已达到表单数量上限（${maxForms}），无法新建表单`);
     }
   }
 

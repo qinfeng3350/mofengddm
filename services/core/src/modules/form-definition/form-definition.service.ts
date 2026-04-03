@@ -3,12 +3,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FormDefinitionEntity } from '../../database/entities/form-definition.entity';
 import { CreateFormDefinitionDto } from './dto/create-form-definition.dto';
+import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
 
 @Injectable()
 export class FormDefinitionService {
   constructor(
     @InjectRepository(FormDefinitionEntity)
     private formDefinitionRepository: Repository<FormDefinitionEntity>,
+    private readonly tenantLimitsService: TenantLimitsService,
   ) {}
 
   async create(
@@ -17,6 +19,9 @@ export class FormDefinitionService {
     applicationId: string,
     userId: string,
   ): Promise<FormDefinitionEntity> {
+    // 配额约束：检查 maxForms
+    await this.tenantLimitsService.assertCanCreateForm(tenantId);
+
     const layout = createDto.layout
       ? {
           type: createDto.layout.type,

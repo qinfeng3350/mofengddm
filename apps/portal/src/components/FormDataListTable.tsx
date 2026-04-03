@@ -138,7 +138,20 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
     return map;
   }, [departmentList]);
 
-  const formatValue = (val: any, type?: string) => {
+  const formatNumberWithThousands = (raw: any) => {
+    if (raw === null || raw === undefined || raw === "") return "-";
+    const s = String(raw);
+    const cleaned = s.replace(/,/g, "");
+    // 只处理纯数字（允许负号和小数）
+    if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return s;
+    const [i, d] = cleaned.split(".");
+    const sign = i.startsWith("-") ? "-" : "";
+    const intPart = sign ? i.slice(1) : i;
+    const withComma = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return d != null && d !== "" ? `${sign}${withComma}.${d}` : `${sign}${withComma}`;
+  };
+
+  const formatValue = (val: any, type?: string, fieldConfig?: any) => {
     if (type === "datetime") {
       if (!val) return "-";
       const d = dayjs(val);
@@ -242,9 +255,28 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
       return String(val);
     }
 
+    if (type === "boolean") {
+      if (val === null || val === undefined || val === "") return "-";
+      const on =
+        val === true || val === "true" || val === 1 || val === "1";
+      return on ? "是" : "否";
+    }
+
     if (type === "attachment") {
       const urls = extractAttachmentPreviewUrls(val);
       return urls.length ? `附件×${urls.length}` : "-";
+    }
+
+    if (type === "signature") {
+      if (!val || typeof val !== "string") return "-";
+      if (val.startsWith("data:image")) return "[签名]";
+      return String(val);
+    }
+
+    // 数字字段千分位（列表展示）
+    // 统一：number / formula 类型渲染时，对整数部分加逗号（输入为非纯数字则保持原值）。
+    if (type === "number" || type === "formula") {
+      return formatNumberWithThousands(val);
     }
 
     if (val === null || val === undefined || val === "") return "-";
@@ -329,8 +361,28 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
                             </span>
                           );
                         })()
+                      ) : sub.type === "signature" ? (
+                        (() => {
+                          const sig = row[subId];
+                          if (!sig || typeof sig !== "string") return "-";
+                          if (sig.startsWith("data:image")) {
+                            return (
+                              <img
+                                src={sig}
+                                alt=""
+                                style={{
+                                  maxHeight: 32,
+                                  maxWidth: 72,
+                                  objectFit: "contain",
+                                  verticalAlign: "middle",
+                                }}
+                              />
+                            );
+                          }
+                          return formatValue(sig, "signature");
+                        })()
                       ) : (
-                        formatValue(row[subId], sub.type)
+                        formatValue(row[subId], sub.type, sub)
                       )}
                     </div>
                   ))}
@@ -407,7 +459,27 @@ export const FormDataListTable: React.FC<FormDataListTableProps> = ({
                 </span>
               );
             }
-            return formatValue(raw, displayType);
+            if (field.type === "signature") {
+              if (!raw || typeof raw !== "string") return "-";
+              if (raw.startsWith("data:image")) {
+                return (
+                  <img
+                    src={raw}
+                    alt=""
+                    style={{
+                      maxHeight: 44,
+                      maxWidth: 120,
+                      objectFit: "contain",
+                      verticalAlign: "middle",
+                      borderRadius: 4,
+                      border: "1px solid #f0f0f0",
+                    }}
+                  />
+                );
+              }
+              return formatValue(raw, "signature");
+            }
+            return formatValue(raw, displayType, field);
           },
         });
       }

@@ -26,6 +26,7 @@ export const FormPropertiesPanel = ({
       dataLog: formSchema.metadata?.dataLog || "disable",
       pcDisplay: formSchema.metadata?.pcDisplay !== false,
       mobileDisplay: formSchema.metadata?.mobileDisplay !== false,
+      formLayout: formSchema.metadata?.formLayout || "double",
     });
   }, [formSchema, form]);
 
@@ -46,6 +47,7 @@ export const FormPropertiesPanel = ({
           dataLog: changedValues.dataLog,
           pcDisplay: changedValues.pcDisplay,
           mobileDisplay: changedValues.mobileDisplay,
+          formLayout: changedValues.formLayout,
         };
         onValuesChange({
           formName: changedValues.formName || formSchema.formName,
@@ -71,6 +73,19 @@ export const FormPropertiesPanel = ({
           <Select.Option value="客户信息">客户信息</Select.Option>
           <Select.Option value="订单管理">订单管理</Select.Option>
           <Select.Option value="库存管理">库存管理</Select.Option>
+        </Select>
+      </Form.Item>
+
+      <Form.Item
+        label="表单布局"
+        name="formLayout"
+        initialValue={formSchema.metadata?.formLayout || "double"}
+      >
+        <Select>
+          <Select.Option value="single">单列</Select.Option>
+          <Select.Option value="double">双列</Select.Option>
+          <Select.Option value="triple">三列</Select.Option>
+          <Select.Option value="quad">四列</Select.Option>
         </Select>
       </Form.Item>
 

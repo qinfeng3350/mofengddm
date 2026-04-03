@@ -3,6 +3,64 @@
   scrollbar-color: #d9d9d9 #fafafa;
 }
 
+/* 子表字段列表：尽量做成“干净纯白”，避免 Antd 默认表头/行 hover 的浅灰底 */
+.subtableFieldsDrop :global(.ant-table) {
+  background: #fff !important;
+}
+
+.subtableFieldsDrop :global(.ant-table-thead > tr > th) {
+  background: #fff !important;
+}
+
+.subtableFieldsDrop :global(.ant-table-tbody > tr > td) {
+  background: transparent !important;
+}
+
+.subtableFieldsDrop :global(.ant-table-tbody > tr:hover > td) {
+  background: transparent !important;
+}
+
+/* 子表字段列表：紧凑条目风格（对齐你截图那种） */
+.subtableFieldItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 6px;
+}
+
+.subtableFieldItem:hover {
+  background: #fafafa;
+}
+
+.subtableFieldDrag {
+  width: 18px;
+  color: #bfbfbf;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.subtableFieldLabel {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #262626;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subtableFieldActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 /* 紧凑模式：减少表单项间距/控件高度（仅作用于属性面板内部） */
 .propertyPanelScroll :global(.ant-form-vertical .ant-form-item) {
   margin-bottom: 10px;
