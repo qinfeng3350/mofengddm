@@ -17,6 +17,7 @@ import { CreateFormDefinitionDto } from './dto/create-form-definition.dto';
 import { TenantEntity } from '../../database/entities/tenant.entity';
 import { ApplicationEntity } from '../../database/entities/application.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RoleService } from '../role/role.service';
 
 @Controller('api/form-definitions')
 @UseGuards(JwtAuthGuard)
@@ -27,6 +28,7 @@ export class FormDefinitionController {
     private tenantRepository: Repository<TenantEntity>,
     @InjectRepository(ApplicationEntity)
     private applicationRepository: Repository<ApplicationEntity>,
+    private readonly roleService: RoleService,
   ) {}
 
   private async getDefaultTenantId(): Promise<string> {
@@ -54,6 +56,7 @@ export class FormDefinitionController {
     @Request() req: any,
   ) {
     const { tenantId, userId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     
     // 如果没有提供applicationId，获取默认应用
     let applicationId = createDto.applicationId;
@@ -93,12 +96,14 @@ export class FormDefinitionController {
     @Request() req: any,
   ) {
     const { tenantId, userId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     return this.formDefinitionService.update(id, updateDto, tenantId, userId);
   }
 
   @Delete(':id')
   async remove(@Param('id') id: string, @Request() req: any) {
-    const { tenantId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
-    return this.formDefinitionService.remove(id, tenantId);
+    const { tenantId, userId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
+    return this.formDefinitionService.remove(id, tenantId, userId);
   }
 }

@@ -12,6 +12,8 @@ import { UserEntity, TenantEntity } from '../../database/entities';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
+import { LoginLogService } from '../login-log/login-log.service';
+import { EnterpriseLogService } from '../enterprise-log/enterprise-log.service';
 
 @Injectable()
 export class AuthService {
@@ -22,6 +24,8 @@ export class AuthService {
     private tenantRepository: Repository<TenantEntity>,
     private jwtService: JwtService,
     private readonly tenantLimitsService: TenantLimitsService,
+    private readonly loginLogService: LoginLogService,
+    private readonly enterpriseLogService: EnterpriseLogService,
   ) {}
 
   private buildUserDto(user: UserEntity, tenant: TenantEntity) {
@@ -125,7 +129,10 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto) {
+  async login(
+    loginDto: LoginDto,
+    meta?: { ip?: string; userAgent?: string },
+  ) {
     console.log('[AuthService] 登录请求:', { account: loginDto.account });
     
     // 查找用户（支持账号或手机号登录）
@@ -177,6 +184,29 @@ export class AuthService {
 
     const token = this.jwtService.sign(payload);
     console.log('[AuthService] 登录成功，生成token');
+
+    try {
+      await this.loginLogService.record({
+        tenantId: String(user.tenantId),
+        userId: String(user.id),
+        userName: user.name,
+        ip: meta?.ip,
+        userAgent: meta?.userAgent ?? undefined,
+      });
+      await this.enterpriseLogService.log({
+        tenantId: String(user.tenantId),
+        category: 'platform',
+        subtype: 'platform',
+        operatorId: String(user.id),
+        operatorName: user.name,
+        operationType: '登录系统',
+        relatedObject: user.account,
+        detail: `登录了企业工作台`,
+        ip: meta?.ip || '127.0.0.1',
+      });
+    } catch (e) {
+      console.error('[AuthService] 写入登录日志失败:', e);
+    }
 
     return {
       access_token: token,
@@ -302,6 +332,7 @@ export class AuthService {
   async switchTenantByUserId(
     userId: string,
     tenantId: string,
+    meta?: { ip?: string; userAgent?: string },
   ): Promise<{ access_token: string; user: any }> {
     const me = await this.userRepository.findOne({
       where: { id: userId },
@@ -341,10 +372,33 @@ export class AuthService {
     await this.tenantLimitsService.getTenantOrThrow(tenant.id, tenant as any);
 
     const payload = this.buildTokenPayload(targetUser);
-    return {
-      access_token: this.jwtService.sign(payload),
-      user: this.buildUserDto(targetUser, tenant),
-    };
+    const access_token = this.jwtService.sign(payload);
+    const userDto = this.buildUserDto(targetUser, tenant);
+
+    try {
+      await this.loginLogService.record({
+        tenantId: String(targetUser.tenantId),
+        userId: String(targetUser.id),
+        userName: targetUser.name,
+        ip: meta?.ip,
+        userAgent: meta?.userAgent ?? undefined,
+      });
+      await this.enterpriseLogService.log({
+        tenantId: String(targetUser.tenantId),
+        category: 'platform',
+        subtype: 'platform',
+        operatorId: String(targetUser.id),
+        operatorName: targetUser.name,
+        operationType: '切换租户',
+        relatedObject: tenant.name,
+        detail: `切换到租户【${tenant.name}】`,
+        ip: meta?.ip || '127.0.0.1',
+      });
+    } catch (e) {
+      console.error('[AuthService] 切换租户写入登录日志失败:', e);
+    }
+
+    return { access_token, user: userDto };
   }
 
   /**

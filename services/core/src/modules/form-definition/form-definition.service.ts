@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { FormDefinitionEntity } from '../../database/entities/form-definition.entity';
 import { CreateFormDefinitionDto } from './dto/create-form-definition.dto';
 import { TenantLimitsService } from '../tenant-metrics/tenant-limits.service';
+import { EnterpriseLogService } from '../enterprise-log/enterprise-log.service';
 
 @Injectable()
 export class FormDefinitionService {
@@ -11,7 +12,33 @@ export class FormDefinitionService {
     @InjectRepository(FormDefinitionEntity)
     private formDefinitionRepository: Repository<FormDefinitionEntity>,
     private readonly tenantLimitsService: TenantLimitsService,
+    private readonly enterpriseLogService: EnterpriseLogService,
   ) {}
+
+  private parseConfig(raw: any): any {
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      // 历史坏数据：TEXT 列被错误写入对象，MySQL 会存成 "[object Object]"
+      if (raw.trim() === '[object Object]') {
+        return {};
+      }
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+    if (typeof raw === 'object') return raw;
+    return {};
+  }
+
+  private ensureStringConfig(configObj: any): string {
+    try {
+      return JSON.stringify(configObj ?? {});
+    } catch {
+      return JSON.stringify({});
+    }
+  }
 
   async create(
     createDto: CreateFormDefinitionDto,
@@ -48,7 +75,19 @@ export class FormDefinitionService {
       layout: layout as Record<string, unknown>,
     });
 
-    return await this.formDefinitionRepository.save(formDefinition);
+    const saved = await this.formDefinitionRepository.save(formDefinition);
+    await this.enterpriseLogService.log({
+      tenantId,
+      category: 'app',
+      subtype: 'app',
+      operatorId: userId,
+      operationType: '创建数据表',
+      relatedApp: String(applicationId),
+      relatedObject: saved.formName,
+      detail: `创建了数据表【${saved.formName}】`,
+      ip: '127.0.0.1',
+    });
+    return saved;
   }
 
   async findAll(tenantId: string, applicationId?: string): Promise<FormDefinitionEntity[]> {
@@ -61,20 +100,12 @@ export class FormDefinitionService {
       order: { createdAt: 'DESC' },
     });
     
-    // 解析 config JSON 字符串
     return formDefinitions.map(fd => {
-      if (typeof fd.config === 'string') {
-        try {
-          const parsedConfig = JSON.parse(fd.config);
-          (fd as any).config = parsedConfig;
-        } catch (e) {
-          console.error('解析 config JSON 失败:', e);
-          (fd as any).config = { fields: [], layout: { type: 'grid', columns: 12 } };
-        }
-      }
-      if (!(fd as any).config.metadata) {
-        (fd as any).config.metadata = {};
-      }
+      const parsed = this.parseConfig(fd.config);
+      (fd as any).config = Object.keys(parsed).length
+        ? parsed
+        : { fields: [], layout: { type: 'grid', columns: 12 }, metadata: {} };
+      if (!(fd as any).config.metadata) (fd as any).config.metadata = {};
       return fd;
     });
   }
@@ -91,21 +122,11 @@ export class FormDefinitionService {
       throw new NotFoundException(`表单定义 ${formId} 不存在`);
     }
 
-    // 确保 config 字段被正确解析为对象
-    // TypeORM 的 TEXT 类型不会自动解析 JSON，需要手动处理
-    if (typeof formDefinition.config === 'string') {
-      try {
-        formDefinition.config = JSON.parse(formDefinition.config);
-      } catch (e) {
-        console.error('解析 config JSON 失败:', e);
-        // 如果解析失败，设置为空对象
-        formDefinition.config = { fields: [], layout: { type: 'grid', columns: 12 } };
-      }
-    }
-
-    if (!(formDefinition.config as any).metadata) {
-      (formDefinition.config as any).metadata = {};
-    }
+    const parsed = this.parseConfig(formDefinition.config);
+    formDefinition.config = Object.keys(parsed).length
+      ? parsed
+      : { fields: [], layout: { type: 'grid', columns: 12 }, metadata: {} };
+    if (!(formDefinition.config as any).metadata) (formDefinition.config as any).metadata = {};
 
     return formDefinition;
   }
@@ -125,37 +146,17 @@ export class FormDefinitionService {
         } as Record<string, unknown>)
       : formDefinition.layout;
 
-    // 处理config更新，保留metadata
-    // 解析现有config以保留metadata
-    let existingConfig: any = {};
-    if (typeof formDefinition.config === 'string') {
-      try {
-        existingConfig = JSON.parse(formDefinition.config);
-      } catch (e) {
-        existingConfig = {};
-      }
-    } else {
-      existingConfig = formDefinition.config;
-    }
-    
-    // 如果提供了fields，更新整个config（包括metadata和elements）
-    let updatedConfig = formDefinition.config;
-    if (updateDto.fields) {
-      // 检查前端是否在config中传递了metadata或elements（通过特殊字段）
-      // 或者从existingConfig中保留metadata和elements
-      const metadata = (updateDto as any).metadata || existingConfig.metadata || {};
-      const elements = (updateDto as any).elements || existingConfig.elements;
-      const configData: any = {
-        fields: updateDto.fields,
-        layout: layout,
-        metadata: metadata,
-      };
-      // 如果存在elements，也包含进去
-      if (elements) {
-        configData.elements = elements;
-      }
-      updatedConfig = JSON.stringify(configData);
-    }
+    const existingConfig = this.parseConfig(formDefinition.config);
+    const metadata = (updateDto as any).metadata || existingConfig.metadata || {};
+    const elements = (updateDto as any).elements || existingConfig.elements;
+    const fields = updateDto.fields || existingConfig.fields || [];
+    const configData: any = {
+      fields,
+      layout: layout || existingConfig.layout || { type: 'grid', columns: 12 },
+      metadata,
+    };
+    if (elements) configData.elements = elements;
+    const updatedConfig = this.ensureStringConfig(configData);
 
     Object.assign(formDefinition, {
       formName: updateDto.formName ?? formDefinition.formName,
@@ -167,11 +168,34 @@ export class FormDefinitionService {
       layout: layout,
     });
 
-    return await this.formDefinitionRepository.save(formDefinition);
+    const saved = await this.formDefinitionRepository.save(formDefinition);
+    await this.enterpriseLogService.log({
+      tenantId,
+      category: 'app',
+      subtype: 'app',
+      operatorId: userId,
+      operationType: '修改数据表',
+      relatedApp: String(saved.applicationId || ''),
+      relatedObject: saved.formName,
+      detail: `修改了数据表【${saved.formName}】`,
+      ip: '127.0.0.1',
+    });
+    return saved;
   }
 
-  async remove(formId: string, tenantId: string): Promise<void> {
+  async remove(formId: string, tenantId: string, userId?: string): Promise<void> {
     const formDefinition = await this.findOne(formId, tenantId);
     await this.formDefinitionRepository.remove(formDefinition);
+    await this.enterpriseLogService.log({
+      tenantId,
+      category: 'app',
+      subtype: 'app',
+      operatorId: userId,
+      operationType: '删除数据表',
+      relatedApp: String(formDefinition.applicationId || ''),
+      relatedObject: formDefinition.formName,
+      detail: `删除了数据表【${formDefinition.formName}】`,
+      ip: '127.0.0.1',
+    });
   }
 }

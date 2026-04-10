@@ -11,6 +11,7 @@ import {
 } from '../../database/entities';
 import { BusinessRuleExecutorService } from '../business-rule/business-rule.executor';
 import { DingtalkService } from '../dingtalk/dingtalk.service';
+import { EnterpriseLogService } from '../enterprise-log/enterprise-log.service';
 
 type WorkflowNode = {
   nodeId: string;
@@ -44,6 +45,7 @@ export class WorkflowService {
     private readonly ruleExecutor: BusinessRuleExecutorService,
     private readonly dingtalkService: DingtalkService,
     private readonly configService: ConfigService,
+    private readonly enterpriseLogService: EnterpriseLogService,
   ) {}
 
   private async pushDingtalkTodoIfNeeded(params: {
@@ -244,6 +246,18 @@ export class WorkflowService {
       });
 
       if (created?.id) {
+        await this.enterpriseLogService.log({
+          tenantId: params.tenantId,
+          category: 'message',
+          subtype: 'message',
+          operatorId: params.creatorUserId,
+          operationType: '发送消息',
+          triggerType: '钉钉待办',
+          relatedObject: params.recordId,
+          content: `待办：${params.nodeLabel}`,
+          detail: `推送成功 taskId=${created.id}`,
+          ip: '127.0.0.1',
+        });
         return {
           todoTaskId: String(created.id),
           creatorUnionId,
@@ -266,6 +280,19 @@ export class WorkflowService {
         },
         err?.message || e,
       );
+      await this.enterpriseLogService.log({
+        tenantId: params.tenantId,
+        category: 'message',
+        subtype: 'message',
+        operatorId: params.creatorUserId,
+        operationType: '发送消息',
+        triggerType: '钉钉待办',
+        errorType: '发送失败',
+        relatedObject: params.recordId,
+        content: `待办：${params.nodeLabel}`,
+        detail: err?.message || '钉钉待办推送失败',
+        ip: '127.0.0.1',
+      });
       return null;
     }
   }

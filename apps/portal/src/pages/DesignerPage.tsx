@@ -69,10 +69,8 @@ export const DesignerPage = () => {
 
     if (formId) {
       // 加载已有表单
-      console.log("开始加载表单:", formId); // 调试日志
       loadForm(formId)
         .then(() => {
-          console.log("表单加载成功"); // 调试日志
         })
         .catch((error) => {
           console.error("加载表单失败:", error);

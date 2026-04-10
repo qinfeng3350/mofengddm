@@ -8,10 +8,14 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UserEntity, TenantEntity } from '../../database/entities';
 import { TenantMetricsModule } from '../tenant-metrics/tenant-metrics.module';
+import { LoginLogModule } from '../login-log/login-log.module';
+import { EnterpriseLogModule } from '../enterprise-log/enterprise-log.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([UserEntity, TenantEntity]),
+    LoginLogModule,
+    EnterpriseLogModule,
     TenantMetricsModule,
     PassportModule,
     JwtModule.registerAsync({

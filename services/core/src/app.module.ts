@@ -12,6 +12,7 @@ import { FormDataModule } from './modules/form-data/form-data.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BusinessRuleModule } from './modules/business-rule/business-rule.module';
 import { UserModule } from './modules/user/user.module';
+import { RoleModule } from './modules/role/role.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 import { DingtalkModule } from './modules/dingtalk/dingtalk.module';
 import { DepartmentModule } from './modules/department/department.module';
@@ -19,6 +20,9 @@ import { OperationLogModule } from './modules/operation-log/operation-log.module
 import { TenantMetricsModule } from './modules/tenant-metrics/tenant-metrics.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { LicensingModule } from './modules/licensing/licensing.module';
+import { LoginLogModule } from './modules/login-log/login-log.module';
+import { WecomModule } from './modules/wecom/wecom.module';
+import { EnterpriseLogModule } from './modules/enterprise-log/enterprise-log.module';
 import {
   TenantEntity,
   UserEntity,
@@ -34,6 +38,8 @@ import {
   WorkflowInstanceEntity,
   BusinessRuleEntity,
   OperationLogEntity,
+  LoginLogEntity,
+  EnterpriseLogEntity,
 } from './database/entities';
 
 @Module({
@@ -74,6 +80,8 @@ import {
             WorkflowInstanceEntity,
             BusinessRuleEntity,
             OperationLogEntity,
+            LoginLogEntity,
+            EnterpriseLogEntity,
           ],
           synchronize: false,
           // 优化日志：生产环境关闭，开发环境只记录错误和警告
@@ -99,12 +107,16 @@ import {
     // 新增工作流运行模块
     WorkflowModule,
     UserModule,
+    RoleModule,
     DingtalkModule,
     DepartmentModule,
     OperationLogModule,
     TenantMetricsModule,
     UploadModule,
     LicensingModule,
+    LoginLogModule,
+    WecomModule,
+    EnterpriseLogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

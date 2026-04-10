@@ -13,6 +13,7 @@ import { FormFieldRenderer } from "./FormFieldRenderer";
 import { RuntimeContainerRenderer } from "./RuntimeContainerRenderer";
 import type { FormSchemaType, FormFieldSchema, LayoutContainerSchemaType } from "@mofeng/shared-schema";
 import dayjs from "dayjs";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 // 流水号规则类型
 interface SerialRule {
@@ -135,13 +136,59 @@ interface FormRendererProps {
   recordId?: string; // 编辑模式下的记录ID
   onSubmitSuccess?: (data: Record<string, unknown>) => void;
   mode?: "add" | "edit" | "view"; // 模式：新增、编辑、查看
+  /** 字段权限上下文（可选）：节点/角色；不传则仅按节点(start/流程实例)计算 */
+  permissionContext?: {
+    currentNodeId?: string;
+    roleIds?: string[];
+  };
 }
 
-export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }: FormRendererProps) => {
+const collectRuntimeFields = (items: any[]): any[] => {
+  const result: any[] = [];
+  (items || []).forEach((item) => {
+    if (item?.fieldId) {
+      result.push(item);
+      return;
+    }
+    if (item?.children && Array.isArray(item.children)) {
+      result.push(...collectRuntimeFields(item.children));
+      return;
+    }
+    if (item?.columns && Array.isArray(item.columns)) {
+      item.columns.forEach((col: any) => {
+        if (col?.children && Array.isArray(col.children)) {
+          result.push(...collectRuntimeFields(col.children));
+        }
+      });
+    }
+  });
+  return result;
+};
+
+const isEmptyLinkValue = (v: unknown) =>
+  v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+
+const sameValue = (a: unknown, b: unknown) => {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+};
+
+export const FormRenderer = ({
+  formId,
+  recordId,
+  onSubmitSuccess,
+  mode = "add",
+  permissionContext,
+}: FormRendererProps) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isViewMode = mode === "view";
   const isEditMode = mode === "edit";
+  const isMobile = useIsMobile();
   
   const { data: formDefinition, isLoading } = useQuery({
     queryKey: ["formDefinition", formId],
@@ -179,7 +226,20 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     enabled: !!recordId && (isEditMode || isViewMode),
   });
 
+  // 获取流程实例（用于节点字段权限；仅在有 recordId 时可用）
+  const { data: workflowInstance } = useQuery({
+    queryKey: ["workflowInstanceByRecord", recordId],
+    queryFn: () => workflowApi.getInstanceByRecord(recordId!),
+    enabled: !!recordId,
+  });
+
   const { user } = useAuthStore();
+
+  // 当前用户角色（用于字段权限 - roleRules）
+  const { data: myRoles } = useQuery({
+    queryKey: ["users", "me", "roles"],
+    queryFn: async () => apiClient.get("/users/me/roles"),
+  });
 
   // 流水号生成状态
   const [serialNumberCache, setSerialNumberCache] = useState<Record<string, string>>({});
@@ -501,6 +561,169 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     });
   }, [user?.id, userMap, formDefinition, setValue, getValues]);
 
+  // 默认值-数据联动：当条件字段变化时，自动从关联表取值并回填当前字段（含成员字段）
+  useEffect(() => {
+    if (!formDefinition) return;
+    if (isViewMode) return;
+    if (!setValue || !getValues) return;
+
+    const run = async () => {
+      const elements = formDefinition.config.elements || formDefinition.config.fields || [];
+      const runtimeFields = collectRuntimeFields(elements);
+      const fieldMap = new Map<string, any>(
+        runtimeFields
+          .filter((f: any) => !!f?.fieldId)
+          .map((f: any) => [String(f.fieldId), f]),
+      );
+      const linkFields = runtimeFields.filter((f: any) => {
+        const adv = f?.advanced || {};
+        const cfg = adv.defaultDataLink || {};
+        return (
+          adv.defaultMode === "dataLink" &&
+          cfg &&
+          typeof cfg === "object" &&
+          cfg.relatedFormId &&
+          cfg.targetRelatedFieldId &&
+          Array.isArray(cfg.conditions) &&
+          cfg.conditions.length > 0
+        );
+      });
+
+      if (linkFields.length === 0) return;
+
+      const relatedRowsCache = new Map<string, any[]>();
+
+      for (const f of linkFields) {
+        const fieldId = String(f.fieldId || "");
+        if (!fieldId) continue;
+        const cfg = f.advanced?.defaultDataLink || {};
+        const relatedFormId = String(cfg.relatedFormId || "");
+        const targetRelatedFieldId = String(cfg.targetRelatedFieldId || "");
+        const matchMode = cfg.matchMode === "any" ? "any" : "all";
+        const conditions = (Array.isArray(cfg.conditions) ? cfg.conditions : []).filter(
+          (c: any) => c?.relatedFieldId && c?.currentFieldId,
+        );
+        if (!relatedFormId || !targetRelatedFieldId || conditions.length === 0) continue;
+
+        const pairs = conditions.map((c: any) => {
+          const currentFieldId = String(c.currentFieldId);
+          return {
+            relatedFieldId: String(c.relatedFieldId),
+            currentFieldId,
+            currentValue: getValues(currentFieldId),
+          };
+        });
+
+        const hasAnyValue = pairs.some((p) => !isEmptyLinkValue(p.currentValue));
+        if (!hasAnyValue) {
+          const current = getValues(fieldId);
+          if (!isEmptyLinkValue(current)) {
+            setValue(fieldId, undefined, { shouldDirty: true, shouldTouch: true });
+          }
+          continue;
+        }
+
+        let rows = relatedRowsCache.get(relatedFormId);
+        if (!rows) {
+          try {
+            const list = await formDataApi.getListByForm(relatedFormId);
+            rows = Array.isArray(list) ? list : [];
+          } catch {
+            rows = [];
+          }
+          relatedRowsCache.set(relatedFormId, rows);
+        }
+
+        const normalize = (v: unknown) => String(v ?? "").trim();
+        const getCandidateValues = async (pair: {
+          relatedFieldId: string;
+          currentFieldId: string;
+          currentValue: unknown;
+        }) => {
+          const out: string[] = [];
+          const raw = pair.currentValue;
+          if (!isEmptyLinkValue(raw)) {
+            out.push(normalize(raw));
+          }
+
+          // 兼容：当前字段是“关联其他表单数据”时，当前值可能是 recordId；
+          // 条件里常配的是“名称字段”，因此补充 recordId -> 展示字段值 的匹配候选。
+          const currentField = fieldMap.get(pair.currentFieldId);
+          if (currentField?.advanced?.optionsSource === "relatedForm") {
+            const optionRelatedFormId = String(currentField?.advanced?.optionsRelatedFormId || "");
+            const optionRelatedLabelFieldId = String(currentField?.advanced?.optionsRelatedLabelFieldId || "");
+            if (optionRelatedFormId && optionRelatedLabelFieldId && !isEmptyLinkValue(raw)) {
+              let optionRows = relatedRowsCache.get(optionRelatedFormId);
+              if (!optionRows) {
+                try {
+                  const list = await formDataApi.getListByForm(optionRelatedFormId);
+                  optionRows = Array.isArray(list) ? list : [];
+                } catch {
+                  optionRows = [];
+                }
+                relatedRowsCache.set(optionRelatedFormId, optionRows);
+              }
+              const selected = (optionRows || []).find(
+                (r: any) => normalize(r?.recordId) === normalize(raw),
+              );
+              const labelVal = selected?.data?.[optionRelatedLabelFieldId];
+              if (!isEmptyLinkValue(labelVal)) {
+                out.push(normalize(labelVal));
+              }
+            }
+          }
+          return Array.from(new Set(out.filter(Boolean)));
+        };
+
+        const candidatesList = await Promise.all(pairs.map((p) => getCandidateValues(p)));
+        const hit = (rows || []).find((row: any) => {
+          const rowData = row?.data || {};
+          const checks = pairs.map((p, idx) => {
+            const candidates = candidatesList[idx] || [];
+            if (candidates.length === 0) return false;
+            const rowVal = normalize(rowData[p.relatedFieldId]);
+            return candidates.includes(rowVal);
+          });
+          return matchMode === "any" ? checks.some(Boolean) : checks.every(Boolean);
+        });
+
+        let nextValue = hit?.data ? hit.data[targetRelatedFieldId] : undefined;
+        // 成员字段联动值格式归一：支持对象/数组/字符串，最终写入用户ID或ID数组
+        if (f.type === "user") {
+          const isMulti = f?.advanced?.multiple === true;
+          const toUserId = (v: any): string | undefined => {
+            if (v == null) return undefined;
+            if (typeof v === "string" || typeof v === "number") return String(v);
+            if (typeof v === "object") {
+              return String(v.id ?? v.userId ?? v.value ?? "").trim() || undefined;
+            }
+            return undefined;
+          };
+          if (isMulti) {
+            if (Array.isArray(nextValue)) {
+              nextValue = nextValue.map((x: any) => toUserId(x)).filter(Boolean);
+            } else {
+              const one = toUserId(nextValue);
+              nextValue = one ? [one] : [];
+            }
+          } else {
+            if (Array.isArray(nextValue)) {
+              nextValue = toUserId(nextValue[0]);
+            } else {
+              nextValue = toUserId(nextValue);
+            }
+          }
+        }
+        const currentValue = getValues(fieldId);
+        if (!sameValue(currentValue, nextValue)) {
+          setValue(fieldId, nextValue as any, { shouldDirty: true, shouldTouch: true });
+        }
+      }
+    };
+
+    void run();
+  }, [formDefinition, formValues, isViewMode, setValue, getValues]);
+
   const showPreviewThenSubmit = async (data: Record<string, unknown>) => {
     if (hasWorkflowRuntime) {
       setPendingSubmitData(data);
@@ -526,7 +749,7 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     return <div>表单不存在</div>;
   }
 
-  const formSchema: FormSchemaType = {
+  const baseFormSchema: FormSchemaType = {
     formId: formDefinition.formId,
     formName: formDefinition.formName,
     status: formDefinition.status,
@@ -536,11 +759,129 @@ export const FormRenderer = ({ formId, recordId, onSubmitSuccess, mode = "add" }
     elements: formDefinition.config.elements,
   };
   // 用于运行时布局/权限等：metadata 可能在 formDefinition.metadata 或 config.metadata
-  (formSchema as any).metadata = formMetadata;
+  (baseFormSchema as any).metadata = formMetadata;
+
+  const fieldPermissions = (formMetadata as any)?.fieldPermissions;
+  const roleIds = (() => {
+    const ids = (myRoles || []).map((r: any) => String(r.id)).filter(Boolean);
+    const extra = permissionContext?.roleIds || [];
+    return Array.from(new Set([...ids, ...extra.map(String)])).filter(Boolean);
+  })();
+  const effectiveNodeId =
+    permissionContext?.currentNodeId ||
+    (mode === "add" ? "start" : (workflowInstance as any)?.currentNodeId) ||
+    "start";
+
+  const applyFieldPermissions = (el: any): any => {
+    if (!fieldPermissions || typeof fieldPermissions !== "object") return el;
+    const fallback = fieldPermissions?.defaults?.fallback || "editable";
+    const nodeRules = fieldPermissions?.nodeRules?.[effectiveNodeId] || {};
+    const roleRules = fieldPermissions?.roleRules || {};
+
+    const chooseStrictest = (actions: string[]) => {
+      // hidden > readonly > editable
+      if (actions.includes("hidden")) return "hidden";
+      if (actions.includes("readonly")) return "readonly";
+      return "editable";
+    };
+
+    const getRoleAction = (key: string) => {
+      if (!Array.isArray(roleIds) || roleIds.length === 0) return undefined;
+      const hits: string[] = [];
+      for (const rid of roleIds) {
+        const m = roleRules?.[String(rid)];
+        const a = m?.[key];
+        if (a) hits.push(a);
+      }
+      if (hits.length === 0) return undefined;
+      return chooseStrictest(hits);
+    };
+
+    const applyToField = (field: any) => {
+      const fieldKey = String(field.fieldId);
+      const nodeAction = nodeRules?.[fieldKey];
+      const roleAction = getRoleAction(fieldKey);
+      const action = (nodeAction || roleAction || fallback) as "hidden" | "readonly" | "editable";
+
+      const next = { ...field };
+      if (action === "hidden") {
+        next.visible = false;
+        next.editable = false;
+      } else if (action === "readonly") {
+        next.visible = true;
+        next.editable = false;
+      } else {
+        next.visible = true;
+        // editable 仍受字段自身配置约束：如果原来就是不可编辑，不强行改成可编辑
+        next.editable = field.editable !== false;
+      }
+
+      // 子表列权限：key = `${subtableId}.${colId}`
+      if (next.type === "subtable" && Array.isArray(next.subtableFields)) {
+        next.subtableFields = next.subtableFields.map((c: any) => {
+          const colKey = `${fieldKey}.${String(c.fieldId)}`;
+          const colNodeAction = nodeRules?.[colKey];
+          const colRoleAction = getRoleAction(colKey);
+          const colAction = (colNodeAction || colRoleAction || fallback) as
+            | "hidden"
+            | "readonly"
+            | "editable";
+          const colNext = { ...c };
+          if (colAction === "hidden") {
+            colNext.visible = false;
+            colNext.editable = false;
+          } else if (colAction === "readonly") {
+            colNext.visible = true;
+            colNext.editable = false;
+          } else {
+            colNext.visible = true;
+            colNext.editable = c.editable !== false;
+          }
+          return colNext;
+        });
+      }
+      return next;
+    };
+
+    // field element
+    if (el && typeof el === "object" && "fieldId" in el) {
+      return applyToField(el);
+    }
+
+    // container element
+    if (el && typeof el === "object" && "containerId" in el) {
+      const next = { ...el };
+      if (Array.isArray(next.children)) {
+        next.children = next.children.map(applyFieldPermissions);
+      }
+      if (Array.isArray((next as any).columns)) {
+        (next as any).columns = (next as any).columns.map((col: any) => {
+          const colNext = { ...col };
+          if (Array.isArray(colNext.children)) {
+            colNext.children = colNext.children.map(applyFieldPermissions);
+          }
+          return colNext;
+        });
+      }
+      return next;
+    }
+    return el;
+  };
+
+  const formSchema: FormSchemaType = (() => {
+    const next = { ...baseFormSchema } as any;
+    next.fields = (baseFormSchema.fields || []).map(applyFieldPermissions);
+    if (Array.isArray(baseFormSchema.elements)) {
+      next.elements = baseFormSchema.elements.map(applyFieldPermissions);
+    }
+    next.metadata = (baseFormSchema as any).metadata;
+    return next as FormSchemaType;
+  })();
 
   // 使用elements数组（如果存在），否则使用fields数组
   const elements = formSchema.elements || formSchema.fields.map((f) => f as any);
   const columnsCount = (() => {
+    if (isMobile) return 1;
     const mode = (formSchema as any)?.metadata?.formLayout || "double";
     if (mode === "single") return 1;
     if (mode === "triple") return 3;

@@ -14,6 +14,8 @@ import { SystemPage } from "@/pages/settings/SystemPage";
 import { PluginPage } from "@/pages/settings/PluginPage";
 import { AIPage } from "@/pages/settings/AIPage";
 import { TemplatePage } from "@/pages/settings/TemplatePage";
+import { WorkbenchSettingsPage } from "@/pages/settings/WorkbenchSettingsPage";
+import { EnterpriseManagementPage } from "@/pages/EnterpriseManagementPage";
 import { ReportDesignerPage } from "@/pages/ReportDesignerPage";
 import { ReportWidgetDesignerPage } from "@/pages/ReportWidgetDesignerPage";
 import { RuntimeReportPage } from "@/pages/RuntimeReportPage";
@@ -23,6 +25,8 @@ import { DataVRuntimePage } from "@/pages/DataVRuntimePage";
 import { BusinessRulePage } from "@/pages/BusinessRulePage";
 import { PrintTemplateDesignerPage } from "@/pages/PrintTemplateDesignerPage";
 import { DeveloperPage } from "@/pages/DeveloperPage";
+import { DocsPage } from "@/pages/DocsPage";
+import { ContactsPage } from "@/pages/ContactsPage";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { WorkflowTasksPage } from "@/pages/WorkflowTasksPage";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -45,6 +49,22 @@ function App() {
         element={
           <ProtectedRoute>
             <HomePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/docs/:doc"
+        element={
+          <ProtectedRoute>
+            <DocsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/contacts"
+        element={
+          <ProtectedRoute>
+            <ContactsPage />
           </ProtectedRoute>
         }
       />
@@ -153,6 +173,14 @@ function App() {
         }
       />
       <Route
+        path="/settings/enterprise"
+        element={
+          <ProtectedRoute>
+            <EnterpriseManagementPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/settings/plugin"
         element={
           <ProtectedRoute>
@@ -173,6 +201,14 @@ function App() {
         element={
           <ProtectedRoute>
             <TemplatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/workbench"
+        element={
+          <ProtectedRoute>
+            <WorkbenchSettingsPage />
           </ProtectedRoute>
         }
       />

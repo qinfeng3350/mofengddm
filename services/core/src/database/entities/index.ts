@@ -12,3 +12,5 @@ export * from './workflow-definition.entity';
 export * from './business-rule.entity';
 export * from './workflow-instance.entity';
 export * from './operation-log.entity';
+export * from './login-log.entity';
+export * from './enterprise-log.entity';

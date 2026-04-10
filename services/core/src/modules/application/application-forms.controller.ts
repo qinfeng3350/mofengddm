@@ -16,6 +16,7 @@ import { CreateFormDefinitionDto } from '../form-definition/dto/create-form-defi
 import { TenantEntity } from '../../database/entities/tenant.entity';
 import { ApplicationEntity } from '../../database/entities/application.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RoleService } from '../role/role.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/applications/:appId/forms')
@@ -26,6 +27,7 @@ export class ApplicationFormsController {
     private tenantRepository: Repository<TenantEntity>,
     @InjectRepository(ApplicationEntity)
     private applicationRepository: Repository<ApplicationEntity>,
+    private readonly roleService: RoleService,
   ) {}
 
   private async getDefaultTenantId(): Promise<string> {
@@ -45,8 +47,9 @@ export class ApplicationFormsController {
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || (await this.getDefaultTenantId());
-    const userId = req.user?.userId || 'default-user';
-    
+    const userId = req.user?.userId || req.user?.id || 'default-user';
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
+
     // 验证应用是否存在
     const application = await this.applicationRepository.findOne({
       where: { id: appId, tenantId },
@@ -82,7 +85,8 @@ export class ApplicationFormsController {
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || (await this.getDefaultTenantId());
-    const userId = req.user?.userId || 'default-user';
+    const userId = req.user?.userId || req.user?.id || 'default-user';
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     return this.formDefinitionService.update(formId, updateDto, tenantId, userId);
   }
 
@@ -93,7 +97,9 @@ export class ApplicationFormsController {
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || (await this.getDefaultTenantId());
-    return this.formDefinitionService.remove(formId, tenantId);
+    const userId = req.user?.userId || req.user?.id || 'default-user';
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
+    return this.formDefinitionService.remove(formId, tenantId, userId);
   }
 }
 

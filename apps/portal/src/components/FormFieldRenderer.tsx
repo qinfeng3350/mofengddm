@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Controller, useFormContext } from "react-hook-form";
 import type { Control } from "react-hook-form";
 import {
@@ -64,6 +64,106 @@ interface FormFieldRendererProps {
 export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, formSchema }: FormFieldRendererProps) => {
   const { user } = useAuthStore();
   const isDisabled = disabled || !field.editable;
+
+  const isOptionField =
+    field.type === "select" ||
+    field.type === "radio" ||
+    field.type === "checkbox" ||
+    field.type === "multiselect";
+
+  const optionSource = (field as any)?.advanced?.optionsSource as string | undefined;
+  const optionsRelatedFormId = (field as any)?.advanced?.optionsRelatedFormId as string | undefined;
+  const optionsRelatedLabelFieldId = (field as any)?.advanced?.optionsRelatedLabelFieldId as string | undefined;
+  const optionsAllowOther = (field as any)?.advanced?.optionsAllowOther === true;
+  const optionColorful = (field as any)?.advanced?.colorful === true;
+
+  const { data: relatedFormRows, isLoading: relatedFormRowsLoading } = useQuery({
+    queryKey: ["option-field-related-rows", optionsRelatedFormId, optionsRelatedLabelFieldId],
+    queryFn: async () => {
+      const list = await formDataApi.getListByForm(String(optionsRelatedFormId));
+      return Array.isArray(list) ? list : [];
+    },
+    enabled:
+      !!isOptionField &&
+      optionSource === "relatedForm" &&
+      !!optionsRelatedFormId &&
+      !!optionsRelatedLabelFieldId,
+    staleTime: 10_000,
+  });
+
+  const effectiveOptions = useMemo(() => {
+    if (
+      isOptionField &&
+      optionSource === "relatedForm" &&
+      optionsRelatedFormId &&
+      optionsRelatedLabelFieldId
+    ) {
+      const list = Array.isArray(relatedFormRows) ? relatedFormRows : [];
+      const mapped = list.map((r: FormDataResponse) => {
+        const labelRaw = (r?.data || {})[optionsRelatedLabelFieldId];
+        const label =
+          labelRaw == null || String(labelRaw).trim() === ""
+            ? `记录 ${String(r.recordId)}`
+            : String(labelRaw);
+        return {
+          label,
+          value: String(r.recordId),
+        };
+      });
+      if (optionsAllowOther) {
+        mapped.push({ label: "其他", value: "__other__" });
+      }
+      return mapped;
+    }
+    const fallback = (field as any)?.options || [];
+    return (fallback as any[]).map((opt: any) => ({
+      label: opt?.label,
+      value: String(opt?.value),
+      color: opt?.color,
+    }));
+  }, [
+    field,
+    isOptionField,
+    optionSource,
+    optionsAllowOther,
+    optionsRelatedFormId,
+    optionsRelatedLabelFieldId,
+    relatedFormRows,
+  ]);
+
+  const selectColorMap = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!optionColorful) return m;
+    (effectiveOptions as any[]).forEach((o: any) => {
+      const v = String(o?.value ?? "");
+      const c = typeof o?.color === "string" ? o.color : "";
+      if (v && c) m.set(v, c);
+    });
+    return m;
+  }, [effectiveOptions, optionColorful]);
+
+  const selectRenderLabel = useCallback(
+    (opt: any) => {
+      const text = String(opt?.label ?? opt?.value ?? "");
+      const color = typeof opt?.color === "string" ? opt.color : undefined;
+      if (!optionColorful || optionSource === "relatedForm") return text;
+      return (
+        <Tag color={color || "processing"} style={{ margin: 0 }}>
+          {text || "-"}
+        </Tag>
+      );
+    },
+    [optionColorful, optionSource],
+  );
+
+  const selectOptionsWithColor = useMemo(() => {
+    // 关联表单数据选项不做彩色（没有颜色来源），保持纯文本即可
+    if (!optionColorful || optionSource === "relatedForm") return effectiveOptions as any;
+    return (effectiveOptions as any[]).map((o: any) => ({
+      ...o,
+      label: selectRenderLabel(o),
+    }));
+  }, [effectiveOptions, optionColorful, optionSource, selectRenderLabel]);
 
   const getDatePickerMode = (format: string): "date" | "month" | "year" => {
     // 约定：包含 D 代表选择到日；不包含 D 但包含 M 代表选择到月；否则选择到年
@@ -445,10 +545,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   {...formField}
                   placeholder={field.placeholder}
                   disabled={isDisabled}
-                  options={field.options?.map((opt) => ({
-                    label: opt.label,
-                    value: String(opt.value),
-                  }))}
+                  loading={relatedFormRowsLoading}
+                  options={selectOptionsWithColor}
                 />
               </Form.Item>
             )}
@@ -473,10 +571,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 <Radio.Group
                   {...formField}
                   disabled={isDisabled}
-                  options={field.options?.map((opt) => ({
-                    label: opt.label,
-                    value: String(opt.value),
-                  }))}
+                  options={effectiveOptions}
                 />
               </Form.Item>
             )}
@@ -528,10 +623,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 <Checkbox.Group
                   {...formField}
                   disabled={isDisabled}
-                  options={field.options?.map((opt) => ({
-                    label: opt.label,
-                    value: String(opt.value),
-                  }))}
+                  options={effectiveOptions}
                 />
               </Form.Item>
             )}
@@ -596,10 +688,25 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   mode="multiple"
                   placeholder={field.placeholder}
                   disabled={isDisabled}
-                  options={field.options?.map((opt) => ({
-                    label: opt.label,
-                    value: String(opt.value),
-                  }))}
+                  loading={relatedFormRowsLoading}
+                  options={selectOptionsWithColor}
+                  tagRender={
+                    optionColorful && optionSource !== "relatedForm"
+                      ? (props) => {
+                          const c = selectColorMap.get(String(props.value));
+                          return (
+                            <Tag
+                              color={c || "processing"}
+                              closable={props.closable}
+                              onClose={props.onClose}
+                              style={{ marginInlineEnd: 4 }}
+                            >
+                              {props.label}
+                            </Tag>
+                          );
+                        }
+                      : undefined
+                  }
                 />
               </Form.Item>
             )}

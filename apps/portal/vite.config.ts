@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "src"),
+        "@docs": path.resolve(__dirname, "../../docs"),
         "@mofeng/shared-schema": path.resolve(
           __dirname,
           "../../packages/shared-schema/src/index.ts",

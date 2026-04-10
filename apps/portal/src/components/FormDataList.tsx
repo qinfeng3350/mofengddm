@@ -11,6 +11,7 @@ import {
   Typography,
   Modal,
   Drawer,
+  Card,
   Checkbox,
   Radio,
   Input,
@@ -18,6 +19,7 @@ import {
   Empty,
   Table,
   Pagination,
+  Avatar,
 } from "antd";
 import {
   EyeOutlined,
@@ -34,6 +36,7 @@ import {
   SettingOutlined,
   CloseOutlined,
   LockOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { Resizable } from "react-resizable";
@@ -48,6 +51,7 @@ import { departmentApi } from "@/api/department";
 import { operationLogApi } from "@/api/operationLog";
 import type { OperationLog } from "@/api/operationLog";
 import { WorkflowRowHoverCardContent } from "./WorkflowRowHoverCard";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 const COL_MIN = 80;
 const COL_MAX = 800;
@@ -108,6 +112,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   onManageFilters,
   listWorkflowHoverEnabled = false,
 }) => {
+  const isMobile = useIsMobile();
   // 表单定义
   const {
     data: queryFormDefinition,
@@ -895,6 +900,34 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     }
   };
 
+  // 下拉/单选/多选：选项来源=关联其他表单数据时，value 存 recordId，这里取展示字段文本
+  const RelatedOptionValueDisplay: React.FC<{
+    recordId: string;
+    relatedFormId: string;
+    labelFieldId: string;
+  }> = ({ recordId, relatedFormId, labelFieldId }) => {
+    const recordIdStr = String(recordId || "").trim();
+    if (!recordIdStr) return <span>-</span>;
+
+    const { data: recordData } = useQuery({
+      queryKey: ["optionRelatedRecord", relatedFormId, recordIdStr],
+      queryFn: () => formDataApi.getById(recordIdStr),
+      enabled: !!relatedFormId && !!recordIdStr,
+      retry: 1,
+      staleTime: 5 * 60 * 1000,
+    });
+
+    const raw = (recordData as any)?.data?.[labelFieldId];
+    if (raw === null || raw === undefined || raw === "") {
+      const shortId =
+        recordIdStr.length > 20 ? `${recordIdStr.substring(0, 20)}...` : recordIdStr;
+      return <span>{shortId}</span>;
+    }
+    return (
+      <span>{typeof raw === "object" ? JSON.stringify(raw) : String(raw)}</span>
+    );
+  };
+
   // 关联表单字段显示组件
   const RelatedFormFieldDisplay: React.FC<{
     field: any;
@@ -1067,6 +1100,86 @@ export const FormDataList: React.FC<FormDataListProps> = ({
         return <RelatedFormFieldDisplay field={field} value={value} />;
       }
 
+      // 下拉/单选/多选：显示选项 label（避免显示 option1 / record_xxx）
+      if (
+        field?.type === "select" ||
+        field?.type === "radio" ||
+        field?.type === "multiselect" ||
+        field?.type === "checkbox"
+      ) {
+        const source = field?.advanced?.optionsSource || "custom";
+        const relatedFormId = field?.advanced?.optionsRelatedFormId;
+        const labelFieldId = field?.advanced?.optionsRelatedLabelFieldId;
+        const colorful = field?.advanced?.colorful === true;
+
+        // 关联其他表单数据：存的是 recordId，需要查关联记录展示字段
+        if (source === "relatedForm" && relatedFormId && labelFieldId) {
+          const recordIds = Array.isArray(value)
+            ? value
+                .filter((v: any) => v !== null && v !== undefined && v !== "")
+                .map(String)
+            : value !== null && value !== undefined && value !== ""
+              ? [String(value)]
+              : [];
+
+          if (recordIds.length === 0) return wrap("-");
+
+          return wrap(
+            recordIds.map((rid: string, idx: number) => (
+              <React.Fragment key={rid || idx}>
+                {idx > 0 ? ", " : null}
+                <RelatedOptionValueDisplay
+                  recordId={rid}
+                  relatedFormId={String(relatedFormId)}
+                  labelFieldId={String(labelFieldId)}
+                />
+              </React.Fragment>
+            )),
+          );
+        }
+
+        const options: any[] = Array.isArray(field?.options) ? field.options : [];
+        const toOption = (v: any) => {
+          if (v === null || v === undefined || v === "") return "";
+          const s = String(v);
+          const hit = options.find(
+            (opt: any) => String(opt?.value ?? "") === s || String(opt?.label ?? "") === s,
+          );
+          return hit || { label: s, value: s };
+        };
+        const renderTag = (opt: any, key: string) => {
+          const label = String(opt?.label ?? opt?.value ?? "");
+          const color = typeof opt?.color === "string" ? opt.color : undefined;
+          if (!colorful) return <span key={key}>{label}</span>;
+          return (
+            <Tag
+              key={key}
+              color={color || "processing"}
+              style={{ marginInlineEnd: 6, marginTop: 2, marginBottom: 2 }}
+            >
+              {label || "-"}
+            </Tag>
+          );
+        };
+
+        if (Array.isArray(value)) {
+          const opts = value.map(toOption).filter(Boolean);
+          if (!opts.length) return wrap("-");
+          return wrap(
+            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4 }}>
+              {opts.map((o: any, idx: number) => renderTag(o, `${String(o?.value ?? idx)}-${idx}`))}
+            </span>,
+          );
+        }
+        if (value === null || value === undefined || value === "") return wrap("-");
+        const opt = toOption(value);
+        return wrap(
+          <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4 }}>
+            {renderTag(opt, String(opt?.value ?? "v"))}
+          </span>,
+        );
+      }
+
       // 标题字段这边按参考实现，不再做「点击查看详情」链接，只保留普通展示
 
       if (field?.type === "date" || field?.type === "datetime") {
@@ -1092,26 +1205,73 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           }
         }
 
-        const extractName = (v: any) => {
-          if (!v) return "";
+        const extractUser = (v: any): { id?: string; name: string; avatar?: string } => {
+          if (!v) return { name: "" };
           if (typeof v === "string" || typeof v === "number") {
             const id = String(v).trim();
             const u = userMap.get(id);
-            if (u) return u.name || u.account || id;
+            if (u) {
+              return {
+                id,
+                name: String(u.name || u.account || id),
+                avatar: u.avatar ? String(u.avatar) : undefined,
+              };
+            }
             // 若不是纯数字（可能已是姓名/账号），直接显示原值
-            if (/\D/.test(id)) return id;
+            if (/\D/.test(id)) return { name: id };
             // 纯数字但未匹配到用户，兜底显示
-            return `未知用户(#${id})`;
+            return { id, name: `未知用户(#${id})` };
           }
-          return v.name || v.label || v.account || v.id || "";
+          const name = v.name || v.label || v.account || v.id || "";
+          const avatar = v.avatar || v.photo || v.avatarUrl;
+          return {
+            id: v.id != null ? String(v.id) : undefined,
+            name: String(name || ""),
+            avatar: avatar ? String(avatar) : undefined,
+          };
+        };
+
+        const renderUserPill = (u: { id?: string; name: string; avatar?: string }, idx: number) => {
+          const key = u.id ? `u-${u.id}` : `u-${idx}-${u.name}`;
+          return (
+            <Tag
+              key={key}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                marginInlineEnd: 0,
+                background: "#f5f5f5",
+                border: "1px solid #d9d9d9",
+                color: "#595959",
+                borderRadius: 6,
+                padding: "2px 8px 2px 6px",
+                lineHeight: "18px",
+              }}
+            >
+              <Avatar
+                size={18}
+                src={u.avatar}
+                icon={<UserOutlined />}
+                style={{ backgroundColor: "#d9d9d9", flex: "0 0 auto" }}
+              />
+              <span style={{ fontSize: 12, color: "#595959" }}>{u.name || "-"}</span>
+            </Tag>
+          );
         };
 
         if (Array.isArray(val)) {
-          const names = val.map(extractName).filter(Boolean);
-          return wrap(names.length ? names.join(", ") : "-");
+          const users = val.map(extractUser).filter((x) => x.name);
+          if (!users.length) return wrap("-");
+          return wrap(
+            <span style={{ display: "inline-flex", flexDirection: "column", gap: 6 }}>
+              {users.map((u, idx) => renderUserPill(u, idx))}
+            </span>,
+          );
         }
-        const name = extractName(val);
-        return wrap(name || "-");
+        const u = extractUser(val);
+        if (!u.name) return wrap("-");
+        return wrap(renderUserPill(u, 0));
       }
 
       // 部门字段：显示部门名称
@@ -1549,6 +1709,141 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     return (
       <div style={{ padding: 24, borderRadius: 8, textAlign: "center" }}>
         <p>表单不存在</p>
+      </div>
+    );
+  }
+
+  // 手机端：卡片列表模式（替代 Table）
+  if (isMobile) {
+    // visibleFields 是 Set：这里取“主表字段”里可见的前几个字段作为卡片摘要
+    const cardFields = (allFieldsList || [])
+      .filter((f: any) => {
+        const k = f?.fieldId || f?.fieldName || f?.id || f?.key;
+        if (!k) return false;
+        return visibleFields instanceof Set ? visibleFields.has(String(k)) : true;
+      })
+      .slice(0, 6);
+    return (
+      <div
+        style={{
+          background: "#fff",
+          padding: 12,
+          borderRadius: 8,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        {/* 顶部工具栏（保持原逻辑，但缩紧间距） */}
+        <div style={{ marginBottom: 8, borderBottom: "1px solid #f0f0f0", paddingBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              {formDefinition.formName || "表单数据"}
+            </Typography.Title>
+            <Space size={8}>
+              {onAdd && (
+                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={onAdd}>
+                  新增
+                </Button>
+              )}
+              <Button size="small" icon={<ReloadOutlined />} onClick={() => refetchData()} />
+            </Space>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          {pagedRowData.length === 0 ? (
+            <div style={{ padding: 24 }}>
+              <Empty description="暂无数据" />
+            </div>
+          ) : (
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              {pagedRowData.map((record: any) => {
+                const recordId = record.recordId || record.id;
+                return (
+                  <Card
+                    key={String(recordId || Math.random())}
+                    size="small"
+                    hoverable
+                    style={{ borderRadius: 10 }}
+                    onClick={() => {
+                      if (onView && recordId) onView(recordId);
+                    }}
+                    bodyStyle={{ padding: 12 }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {String(recordId || "").slice(0, 12) || "记录"}
+                      </div>
+                      <Space size={8}>
+                        {onView && recordId && (
+                          <a
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onView(recordId);
+                            }}
+                          >
+                            详情
+                          </a>
+                        )}
+                        <a
+                          style={{ color: "#ff4d4f" }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!recordId) return;
+                            setSelectedRowKeys([recordId]);
+                            setDeleteModalVisible(true);
+                          }}
+                        >
+                          删除
+                        </a>
+                      </Space>
+                    </div>
+
+                    <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      {cardFields.map((f: any) => {
+                        const key = f.fieldId || f.id;
+                        const value = record?.data?.[key];
+                        return (
+                          <div key={String(key)} style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {f.label || key}
+                            </div>
+                            <div style={{ marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {renderCellValue(f, value, record)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })}
+            </Space>
+          )}
+        </div>
+
+        <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 8, marginTop: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Typography.Text type="secondary">共 {rowData.length} 条</Typography.Text>
+            <Pagination
+              size="small"
+              current={currentPage}
+              pageSize={pageSize}
+              total={rowData.length}
+              showSizeChanger
+              pageSizeOptions={["10", "20", "50", "100"]}
+              onChange={(page, size) => {
+                setCurrentPage(page);
+                setPageSize(size || pageSize);
+              }}
+            />
+          </div>
+        </div>
       </div>
     );
   }

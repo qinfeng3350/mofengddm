@@ -2,7 +2,6 @@ import { Controller, Get, Post, Put, Body, Param, Delete, Req, UseGuards } from 
 import { FormDataService } from './form-data.service';
 import { SubmitFormDataDto } from './dto/submit-form-data.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { Public } from '../auth/decorators/public.decorator';
 
 @Controller(['api/form-data', 'form-data'])
 export class FormDataController {
@@ -22,15 +21,17 @@ export class FormDataController {
   }
 
   @Get('form/:formId')
-  @Public()
-  async findAllByForm(@Param('formId') formId: string) {
-    return this.formDataService.findAll(formId);
+  @UseGuards(JwtAuthGuard)
+  async findAllByForm(@Param('formId') formId: string, @Req() req: any) {
+    const { userId } = this.actor(req);
+    return this.formDataService.findAll(formId, { userId });
   }
 
   @Get(':recordId')
-  @Public()
-  async findOne(@Param('recordId') recordId: string) {
-    return this.formDataService.findOne(recordId);
+  @UseGuards(JwtAuthGuard)
+  async findOne(@Param('recordId') recordId: string, @Req() req: any) {
+    const { userId } = this.actor(req);
+    return this.formDataService.findOne(recordId, { userId });
   }
 
   @Put(':recordId')

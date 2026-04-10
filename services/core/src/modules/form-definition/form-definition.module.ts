@@ -6,11 +6,15 @@ import { FormDefinitionEntity } from '../../database/entities/form-definition.en
 import { TenantEntity } from '../../database/entities/tenant.entity';
 import { ApplicationEntity } from '../../database/entities/application.entity';
 import { TenantMetricsModule } from '../tenant-metrics/tenant-metrics.module';
+import { EnterpriseLogModule } from '../enterprise-log/enterprise-log.module';
+import { RoleModule } from '../role/role.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([FormDefinitionEntity, TenantEntity, ApplicationEntity]),
     TenantMetricsModule,
+    EnterpriseLogModule,
+    RoleModule,
   ],
   controllers: [FormDefinitionController],
   providers: [FormDefinitionService],

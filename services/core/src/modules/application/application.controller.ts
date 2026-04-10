@@ -15,6 +15,7 @@ import { ApplicationService } from './application.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { TenantEntity } from '../../database/entities/tenant.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RoleService } from '../role/role.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/applications')
@@ -23,6 +24,7 @@ export class ApplicationController {
     private readonly applicationService: ApplicationService,
     @InjectRepository(TenantEntity)
     private tenantRepository: Repository<TenantEntity>,
+    private readonly roleService: RoleService,
   ) {}
 
   private async getDefaultTenantId(): Promise<string> {
@@ -38,7 +40,8 @@ export class ApplicationController {
   @Post()
   async create(@Body() createDto: CreateApplicationDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || (await this.getDefaultTenantId());
-    const userId = req.user?.userId || 'default-user';
+    const userId = req.user?.userId || req.user?.id || 'default-user';
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     return this.applicationService.create(createDto, tenantId, userId);
   }
 
@@ -61,13 +64,17 @@ export class ApplicationController {
     @Req() req: any,
   ) {
     const tenantId = req.user?.tenantId || (await this.getDefaultTenantId());
-    return this.applicationService.update(id, updateDto, tenantId);
+    const userId = req.user?.userId || req.user?.id || 'default-user';
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
+    return this.applicationService.update(id, updateDto, tenantId, userId);
   }
 
   @Delete(':id')
   async remove(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || (await this.getDefaultTenantId());
-    return this.applicationService.remove(id, tenantId);
+    const userId = req.user?.userId || req.user?.id || 'default-user';
+    await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
+    return this.applicationService.remove(id, tenantId, userId);
   }
 }
 

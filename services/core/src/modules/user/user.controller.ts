@@ -8,8 +8,12 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UserRoleEntity } from '../../database/entities/user-role.entity';
+import { RoleEntity } from '../../database/entities/role.entity';
 
 function mapUser(user: {
   id: string;
@@ -46,7 +50,13 @@ function mapUser(user: {
 @Controller('api/users')
 @UseGuards(JwtAuthGuard)
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    @InjectRepository(UserRoleEntity)
+    private readonly userRoleRepo: Repository<UserRoleEntity>,
+    @InjectRepository(RoleEntity)
+    private readonly roleRepo: Repository<RoleEntity>,
+  ) {}
 
   @Get()
   async getUsers(
@@ -64,6 +74,27 @@ export class UserController {
 
     const users = await this.userService.findAll(tenantId, all);
     return users.map(mapUser);
+  }
+
+  @Get('me/roles')
+  async getMyRoles(@Request() req: any) {
+    const userId = String(req.user?.id ?? req.user?.userId ?? '');
+    const tenantId = String(req.user?.tenantId ?? '');
+    if (!userId || !tenantId) return [];
+
+    const rows = await this.userRoleRepo
+      .createQueryBuilder('ur')
+      .leftJoin(RoleEntity, 'r', 'r.id = ur.roleId')
+      .where('ur.userId = :userId', { userId })
+      .andWhere('r.tenantId = :tenantId', { tenantId })
+      .select(['ur.roleId as id', 'r.code as code', 'r.name as name'])
+      .getRawMany();
+
+    return rows.map((x: any) => ({
+      id: String(x.id),
+      code: x.code,
+      name: x.name,
+    }));
   }
 
   @Patch(':id/status')

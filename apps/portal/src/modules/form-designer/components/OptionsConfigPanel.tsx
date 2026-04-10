@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Input, Button, Space, Modal, message, Typography } from "antd";
+import { Input, Button, Space, Modal, message, Typography, Tooltip } from "antd";
 import { PlusOutlined, DeleteOutlined, HolderOutlined } from "@ant-design/icons";
 
 interface OptionItem {
@@ -158,6 +158,24 @@ export const OptionsConfigPanel = ({
               placeholder={`选项${index + 1}`}
               size="small"
             />
+            {allowColor ? (
+              <Tooltip title="颜色">
+                <input
+                  type="color"
+                  value={opt.color || "#1677ff"}
+                  onChange={(e) => updateOption(index, { color: e.target.value })}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    padding: 0,
+                    border: "1px solid #d9d9d9",
+                    borderRadius: 6,
+                    background: "transparent",
+                    cursor: "pointer",
+                  }}
+                />
+              </Tooltip>
+            ) : null}
             <Button
               type="text"
               size="small"

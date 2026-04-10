@@ -97,3 +97,90 @@
   transition: all 0.3s ease;
 }
 
+/* 右下角圆形悬浮客服（参考宜搭）：收起仅圆钮，展开在按钮上方弹出卡片 */
+.home-cs-fab-wrap {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.home-cs-fab-wrap > * {
+  pointer-events: auto;
+}
+
+.home-cs-popover {
+  width: min(300px, calc(100vw - 32px));
+  max-height: min(380px, 58vh);
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  animation: home-cs-pop-in 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: bottom right;
+}
+
+@keyframes home-cs-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.home-cs-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+
+.home-cs-panel-body {
+  padding: 12px 14px;
+  overflow: auto;
+  flex: 1;
+}
+
+.home-cs-fab {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #597ef7 0%, #9254de 100%);
+  box-shadow: 0 6px 20px rgba(89, 126, 247, 0.45);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.home-cs-fab:hover {
+  transform: scale(1.06);
+  box-shadow: 0 8px 24px rgba(89, 126, 247, 0.5);
+}
+
+.home-cs-fab:active {
+  transform: scale(0.98);
+}
+
+.home-cs-fab:focus-visible {
+  outline: 2px solid #9254de;
+  outline-offset: 3px;
+}

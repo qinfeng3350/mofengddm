@@ -11,6 +11,7 @@ import { WorkflowService } from './workflow.service';
 import { WorkflowController } from './workflow.controller';
 import { BusinessRuleModule } from '../business-rule/business-rule.module';
 import { DingtalkModule } from '../dingtalk/dingtalk.module';
+import { EnterpriseLogModule } from '../enterprise-log/enterprise-log.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { DingtalkModule } from '../dingtalk/dingtalk.module';
     ]),
     forwardRef(() => BusinessRuleModule),
     DingtalkModule,
+    EnterpriseLogModule,
   ],
   controllers: [WorkflowController],
   providers: [WorkflowService],

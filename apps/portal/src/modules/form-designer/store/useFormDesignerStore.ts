@@ -462,13 +462,10 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
     set({ isLoading: true });
     try {
       const response = await formDefinitionApi.getById(formId);
-      console.log("加载表单响应:", response); // 调试日志
       
       // 确保字段数组存在
       const fields = response.config?.fields || [];
       const layout = response.config?.layout || { type: "grid", columns: 12 };
-      
-      console.log("表单字段:", fields); // 调试日志
       
       const schema: any = {
         formId: response.formId,
@@ -487,7 +484,6 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
       }
       
       const parsedSchema = FormSchema.parse(schema);
-      console.log("解析后的表单Schema:", parsedSchema); // 调试日志
       
       set({
         formSchema: parsedSchema,

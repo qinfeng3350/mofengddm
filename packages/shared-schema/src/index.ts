@@ -221,6 +221,27 @@ export const WorkflowSchema = z.object({
 });
 
 /**
+ * 字段权限（节点 + 角色）
+ *
+ * - action: hidden | readonly | editable
+ * - roleRules: roleId -> { fieldId -> action }
+ * - nodeRules: nodeId -> { fieldId -> action }
+ */
+export const FieldPermissionActionEnum = z.enum(["hidden", "readonly", "editable"]);
+export type FieldPermissionAction = z.infer<typeof FieldPermissionActionEnum>;
+
+export const FieldPermissionsConfigSchema = z.object({
+  defaults: z
+    .object({
+      fallback: FieldPermissionActionEnum.default("editable"),
+    })
+    .optional(),
+  roleRules: z.record(z.record(FieldPermissionActionEnum)).optional(),
+  nodeRules: z.record(z.record(FieldPermissionActionEnum)).optional(),
+});
+export type FieldPermissionsConfig = z.infer<typeof FieldPermissionsConfigSchema>;
+
+/**
  * 数据源 Schema（报表、大屏复用）
  */
 export const DataSourceSchema = z.object({

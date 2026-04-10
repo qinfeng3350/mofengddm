@@ -3,12 +3,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../../database/entities/application.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
+import { EnterpriseLogService } from '../enterprise-log/enterprise-log.service';
 
 @Injectable()
 export class ApplicationService {
   constructor(
     @InjectRepository(ApplicationEntity)
     private applicationRepository: Repository<ApplicationEntity>,
+    private readonly enterpriseLogService: EnterpriseLogService,
   ) {}
 
   async create(createDto: CreateApplicationDto, tenantId: string, userId: string) {
@@ -28,6 +30,17 @@ export class ApplicationService {
     });
 
     const saved = await this.applicationRepository.save(application);
+    await this.enterpriseLogService.log({
+      tenantId,
+      category: 'app',
+      subtype: 'app',
+      operatorId: userId,
+      operationType: '创建应用',
+      relatedApp: createDto.name,
+      relatedObject: createDto.code,
+      detail: `创建了应用【${createDto.name}】`,
+      ip: '127.0.0.1',
+    });
     
     // 解析metadata字段返回
     return {
@@ -65,7 +78,12 @@ export class ApplicationService {
     };
   }
 
-  async update(id: string, updateDto: Partial<CreateApplicationDto>, tenantId: string) {
+  async update(
+    id: string,
+    updateDto: Partial<CreateApplicationDto>,
+    tenantId: string,
+    userId?: string,
+  ) {
     const application = await this.applicationRepository.findOne({
       where: { id, tenantId },
     });
@@ -91,6 +109,17 @@ export class ApplicationService {
     }
 
     const saved = await this.applicationRepository.save(application);
+    await this.enterpriseLogService.log({
+      tenantId,
+      category: 'app',
+      subtype: 'app',
+      operatorId: userId,
+      operationType: '修改应用',
+      relatedApp: saved.name,
+      relatedObject: saved.code,
+      detail: `修改了应用【${saved.name}】`,
+      ip: '127.0.0.1',
+    });
     
     // 解析metadata字段返回
     return {
@@ -99,9 +128,20 @@ export class ApplicationService {
     };
   }
 
-  async remove(id: string, tenantId: string) {
+  async remove(id: string, tenantId: string, userId?: string) {
     const application = await this.findOne(id, tenantId);
     await this.applicationRepository.remove(application);
+    await this.enterpriseLogService.log({
+      tenantId,
+      category: 'app',
+      subtype: 'app',
+      operatorId: userId,
+      operationType: '删除应用',
+      relatedApp: application.name,
+      relatedObject: application.code,
+      detail: `删除了应用【${application.name}】`,
+      ip: '127.0.0.1',
+    });
     return { message: '应用删除成功' };
   }
 }

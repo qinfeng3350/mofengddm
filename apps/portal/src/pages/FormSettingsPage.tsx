@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Layout, Menu, Empty, Button, Card, Modal, Form, Select, Alert, Typography, Space, Input, Collapse, Drawer, Dropdown, Tag, Switch, Divider } from "antd";
+import { Layout, Menu, Empty, Button, Card, Modal, Form, Select, Alert, Typography, Space, Input, Collapse, Drawer, Dropdown, Tag, Switch, Divider, Radio, Table, Tooltip } from "antd";
 import {
   LockOutlined,
   FileTextOutlined,
@@ -26,9 +26,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formDefinitionApi } from "@/api/formDefinition";
 import { businessRuleApi } from "@/api/businessRule";
 import { printTemplateApi } from "@/api/printTemplate";
+import { roleApi } from "@/api/role";
 import { useFormDesignerStore } from "@/modules/form-designer/store/useFormDesignerStore";
 import { message } from "antd";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 const { Text } = Typography;
 const { Option, OptGroup } = Select;
@@ -68,6 +70,7 @@ export const FormSettingsPage: React.FC<FormSettingsPageProps> = ({
   appId,
 }) => {
   const [selectedKey, setSelectedKey] = useState<string>("business-rule");
+  const isMobile = useIsMobile();
 
   const menuItems: MenuItem[] = [
     {
@@ -177,34 +180,63 @@ export const FormSettingsPage: React.FC<FormSettingsPageProps> = ({
 
   return (
     <Layout style={{ height: "100%", background: "#fff" }}>
-      <Sider
-        width={200}
-        style={{
-          background: "#fff",
-          borderRight: "1px solid #f0f0f0",
-          height: "100%",
-        }}
-      >
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={menuItems}
-          style={{ border: "none", height: "100%" }}
-          onClick={({ key }) => setSelectedKey(key as string)}
-        />
-      </Sider>
-      <Content
-        style={{
-          padding: 0,
-          overflow: "hidden",
-          background: "#fff",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {renderContent()}
-      </Content>
+      {isMobile ? (
+        <>
+          <div style={{ padding: 12, borderBottom: "1px solid #f0f0f0" }}>
+            <Select
+              value={selectedKey}
+              onChange={(v) => setSelectedKey(String(v))}
+              style={{ width: "100%" }}
+              options={(menuItems || [])
+                .filter((x: any) => x && typeof x === "object" && "key" in x)
+                .map((x: any) => ({ value: x.key, label: x.label }))}
+            />
+          </div>
+          <Content
+            style={{
+              padding: 0,
+              overflow: "hidden",
+              background: "#fff",
+              height: "100%",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {renderContent()}
+          </Content>
+        </>
+      ) : (
+        <>
+          <Sider
+            width={200}
+            style={{
+              background: "#fff",
+              borderRight: "1px solid #f0f0f0",
+              height: "100%",
+            }}
+          >
+            <Menu
+              mode="inline"
+              selectedKeys={[selectedKey]}
+              items={menuItems}
+              style={{ border: "none", height: "100%" }}
+              onClick={({ key }) => setSelectedKey(key as string)}
+            />
+          </Sider>
+          <Content
+            style={{
+              padding: 0,
+              overflow: "hidden",
+              background: "#fff",
+              height: "100%",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {renderContent()}
+          </Content>
+        </>
+      )}
     </Layout>
   );
 };
@@ -2664,10 +2696,261 @@ const BusinessRuleSettings: React.FC<{
 
 // 字段权限设置组件
 const FieldPermissionSettings: React.FC<{ formId?: string }> = ({ formId }) => {
+  const { data: formDefinition, refetch, isLoading } = useQuery({
+    queryKey: ["formDefinition", formId],
+    queryFn: () => formDefinitionApi.getById(formId!),
+    enabled: !!formId,
+  });
+
+  const { data: roleList = [] } = useQuery({
+    queryKey: ["roles", "list"],
+    queryFn: () => roleApi.list(),
+  });
+
+  const [dimension, setDimension] = useState<"node" | "role">("node");
+  const [selectedNodeId, setSelectedNodeId] = useState<string>("start");
+  const [selectedRoleId, setSelectedRoleId] = useState<string>("");
+  const [fieldSearch, setFieldSearch] = useState<string>("");
+
+  const workflowNodes: Array<{ nodeId: string; label: string; type?: string }> =
+    (formDefinition?.metadata?.workflow &&
+      typeof formDefinition.metadata.workflow === "object" &&
+      Array.isArray((formDefinition.metadata.workflow as any).nodes) &&
+      (formDefinition.metadata.workflow as any).nodes) ||
+    [];
+
+  const allFieldItems = React.useMemo(() => {
+    const fields = (formDefinition?.config?.fields || []) as any[];
+    const items: Array<{ key: string; label: string; group?: string }> = [];
+    for (const f of fields) {
+      if (!f?.fieldId) continue;
+      const baseLabel = String(f.label || f.fieldId);
+      items.push({ key: String(f.fieldId), label: baseLabel, group: "主表字段" });
+      if (f.type === "subtable" && Array.isArray(f.subtableFields)) {
+        for (const c of f.subtableFields) {
+          if (!c?.fieldId) continue;
+          items.push({
+            key: `${String(f.fieldId)}.${String(c.fieldId)}`,
+            label: `${baseLabel} / ${String(c.label || c.fieldId)}`,
+            group: "子表列",
+          });
+        }
+      }
+    }
+    const kw = fieldSearch.trim();
+    if (!kw) return items;
+    return items.filter((x) => x.label.includes(kw) || x.key.includes(kw));
+  }, [formDefinition, fieldSearch]);
+
+  const readFieldPermissions = React.useCallback(() => {
+    const fp = (formDefinition?.metadata as any)?.fieldPermissions;
+    return (fp && typeof fp === "object") ? fp : {};
+  }, [formDefinition]);
+
+  const updateMutation = useMutation({
+    mutationFn: async (nextFieldPermissions: any) => {
+      if (!formId || !formDefinition) return;
+      await formDefinitionApi.update(formId, {
+        // 注意：后端 updateDto.fields 不传时，会以当前实体的 config 进行保存；
+        // 如果这里把已解析的 config 对象原样传回去，会导致 TEXT 列被写成 "[object Object]"。
+        // 所以必须传 fields/layout，保证后端走 JSON.stringify(config) 路径。
+        fields: (formDefinition as any)?.config?.fields || [],
+        layout: (formDefinition as any)?.config?.layout,
+        metadata: {
+          ...(formDefinition.metadata || {}),
+          fieldPermissions: nextFieldPermissions,
+        },
+      } as any);
+    },
+    onSuccess: () => {
+      message.success("保存成功");
+      refetch();
+    },
+    onError: (err: any) => {
+      message.error(err?.message || "保存失败");
+    },
+  });
+
+  const getAction = (fieldKey: string): "hidden" | "readonly" | "editable" => {
+    const fp = readFieldPermissions();
+    const fallback = fp?.defaults?.fallback || "editable";
+    if (dimension === "node") {
+      return (fp?.nodeRules?.[selectedNodeId]?.[fieldKey] || fallback) as any;
+    }
+    return (fp?.roleRules?.[selectedRoleId]?.[fieldKey] || fallback) as any;
+  };
+
+  const setAction = (fieldKey: string, action: "hidden" | "readonly" | "editable") => {
+    const fp = readFieldPermissions();
+    const next = {
+      defaults: { fallback: fp?.defaults?.fallback || "editable" },
+      roleRules: fp?.roleRules || {},
+      nodeRules: fp?.nodeRules || {},
+    } as any;
+
+    if (dimension === "node") {
+      const m = { ...(next.nodeRules?.[selectedNodeId] || {}) };
+      m[fieldKey] = action;
+      next.nodeRules = { ...(next.nodeRules || {}), [selectedNodeId]: m };
+    } else {
+      if (!selectedRoleId) {
+        message.warning("请先选择角色/权限组");
+        return;
+      }
+      const m = { ...(next.roleRules?.[selectedRoleId] || {}) };
+      m[fieldKey] = action;
+      next.roleRules = { ...(next.roleRules || {}), [selectedRoleId]: m };
+    }
+    updateMutation.mutate(next);
+  };
+
   return (
     <SettingsPageLayout title="字段权限">
-      <Card style={{ height: "100%" }}>
-        <Empty description="字段权限设置功能开发中..." />
+      <Card style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <Alert
+            type="info"
+            showIcon
+            message="字段权限说明"
+            description={
+              <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                <div>字段权限可按“流程节点”或“角色/权限组”配置：隐藏 / 只读 / 可编辑。</div>
+                <div>运行态优先级：节点规则优先，其次角色规则兜底（后端也会做过滤/校验）。</div>
+              </div>
+            }
+          />
+
+          <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
+            <Space wrap>
+              <Radio.Group
+                value={dimension}
+                onChange={(e) => setDimension(e.target.value)}
+                optionType="button"
+                buttonStyle="solid"
+              >
+                <Radio.Button value="node">按流程节点</Radio.Button>
+                <Radio.Button value="role">按角色/权限组</Radio.Button>
+              </Radio.Group>
+
+              {dimension === "node" ? (
+                <Select
+                  style={{ width: 240 }}
+                  value={selectedNodeId}
+                  onChange={setSelectedNodeId}
+                  options={[
+                    { value: "start", label: "发起（start）" },
+                    ...workflowNodes.map((n) => ({
+                      value: String(n.nodeId),
+                      label: `${String(n.label || n.nodeId)}（${String(n.nodeId)}）`,
+                    })),
+                  ]}
+                />
+              ) : (
+                <Select
+                  style={{ width: 240 }}
+                  value={selectedRoleId || undefined}
+                  onChange={(v) => setSelectedRoleId(String(v || ""))}
+                  placeholder="选择角色/权限组"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={roleList.map((r: any) => ({
+                    value: String(r.id),
+                    label: `${String(r.name || r.code || r.id)}（${String(r.id)}）`,
+                  }))}
+                />
+              )}
+            </Space>
+
+            <Space wrap>
+              <Input
+                placeholder="搜索字段"
+                value={fieldSearch}
+                onChange={(e) => setFieldSearch(e.target.value)}
+                allowClear
+                style={{ width: 240 }}
+              />
+              <Button
+                onClick={() => {
+                  Modal.confirm({
+                    title: "重置当前配置",
+                    content:
+                      dimension === "node"
+                        ? `确定要清空节点 ${selectedNodeId} 的字段权限配置吗？`
+                        : `确定要清空角色 ${selectedRoleId || "(未选择)"} 的字段权限配置吗？`,
+                    onOk: () => {
+                      const fp = readFieldPermissions();
+                      const next: any = {
+                        defaults: { fallback: fp?.defaults?.fallback || "editable" },
+                        roleRules: fp?.roleRules || {},
+                        nodeRules: fp?.nodeRules || {},
+                      };
+                      if (dimension === "node") {
+                        next.nodeRules = { ...(next.nodeRules || {}), [selectedNodeId]: {} };
+                      } else {
+                        if (!selectedRoleId) {
+                          message.warning("请先选择角色/权限组");
+                          return;
+                        }
+                        next.roleRules = { ...(next.roleRules || {}), [selectedRoleId]: {} };
+                      }
+                      updateMutation.mutate(next);
+                    },
+                  });
+                }}
+                danger
+                icon={<DeleteOutlined />}
+                disabled={updateMutation.isPending}
+              >
+                重置当前
+              </Button>
+            </Space>
+          </Space>
+
+          <Table
+            size="small"
+            loading={isLoading}
+            rowKey="key"
+            pagination={{ pageSize: 30, showSizeChanger: true }}
+            dataSource={allFieldItems}
+            columns={[
+              {
+                title: "字段",
+                dataIndex: "label",
+                key: "label",
+                render: (t: string, row: any) => (
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{t}</div>
+                    <div style={{ fontSize: 12, color: "#999" }}>{row.key}</div>
+                  </div>
+                ),
+              },
+              {
+                title: "权限",
+                dataIndex: "perm",
+                key: "perm",
+                width: 260,
+                render: (_: any, row: any) => {
+                  const action = getAction(row.key);
+                  return (
+                    <Radio.Group
+                      value={action}
+                      onChange={(e) => setAction(row.key, e.target.value)}
+                      disabled={updateMutation.isPending}
+                    >
+                      <Radio.Button value="editable">可编辑</Radio.Button>
+                      <Radio.Button value="readonly">只读</Radio.Button>
+                      <Radio.Button value="hidden">隐藏</Radio.Button>
+                    </Radio.Group>
+                  );
+                },
+              },
+            ]}
+          />
+          <div style={{ fontSize: 12, color: "#999" }}>
+            提示：子表列以 “子表字段ID.列字段ID” 作为权限 key（例如：`purchaseItems.price`）。
+          </div>
+        </Space>
       </Card>
     </SettingsPageLayout>
   );
@@ -3007,7 +3290,9 @@ const WorkflowSettings: React.FC<{ formId?: string }> = ({ formId }) => {
     mutationFn: async (metadata: any) => {
       if (!formId || !formDefinition) return;
       await formDefinitionApi.update(formId, {
-        ...formDefinition,
+        // 同上：必须带上 fields/layout，避免后端把 config 对象写入 TEXT 列
+        fields: (formDefinition as any)?.config?.fields || [],
+        layout: (formDefinition as any)?.config?.layout,
         metadata: {
           ...formDefinition.metadata,
           ...metadata,

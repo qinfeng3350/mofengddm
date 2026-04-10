@@ -1,7 +1,27 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
-import { Card, Button, Empty, Spin, Tag, Space, Typography, Row, Col, Dropdown, Avatar, message, Popconfirm, Input, Tabs, Badge, Modal, Select } from "antd";
+import {
+  Card,
+  Button,
+  Empty,
+  Spin,
+  Tag,
+  Space,
+  Typography,
+  Row,
+  Col,
+  Dropdown,
+  Avatar,
+  message,
+  Popconfirm,
+  Input,
+  Tabs,
+  Badge,
+  Modal,
+  Select,
+} from "antd";
+import type { MenuProps } from "antd";
 import {
   PlusOutlined,
   EditOutlined,
@@ -11,11 +31,12 @@ import {
   LogoutOutlined,
   BellOutlined,
   QuestionCircleOutlined,
+  ContactsOutlined,
   SettingOutlined,
   TeamOutlined,
   LockOutlined,
   AppstoreOutlined,
-  ThunderboltOutlined,
+  BankOutlined,
   FileTextOutlined,
   GlobalOutlined,
   DeleteOutlined,
@@ -26,6 +47,10 @@ import {
   StarOutlined,
   DownloadOutlined,
   UploadOutlined,
+  DownOutlined,
+  DesktopOutlined,
+  CustomerServiceOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { applicationApi } from "@/api/application";
@@ -37,13 +62,17 @@ import { usePageTitle } from "@/hooks/usePageTitle";
 import dayjs from "dayjs";
 import { authApi } from "@/api/auth";
 import "./HomePage.css";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 const { Title, Text } = Typography;
+
+const WORKBENCH_STORAGE_KEY = "portal-workbench-selection";
 
 export const HomePage = () => {
   usePageTitle("应用管理 - 墨枫低代码平台");
   const navigate = useNavigate();
   const { user, clearAuth } = useAuthStore();
+  const isMobile = useIsMobile();
   
   // 获取当前用户信息（包括租户信息）
   const { data: currentUserInfo, refetch: refetchUserInfo } = useQuery({
@@ -62,7 +91,26 @@ export const HomePage = () => {
     refetchOnMount: true, // 组件挂载时重新获取
     refetchOnWindowFocus: true, // 窗口获得焦点时重新获取
   });
+
+  const tenantName = useMemo(() => {
+    return (
+      (currentUserInfo as any)?.tenant?.name ||
+      (currentUserInfo as any)?.tenantName ||
+      (user as any)?.tenant?.name ||
+      "企业默认工作台"
+    );
+  }, [currentUserInfo, user]);
+  const [selectedWorkbenchId, setSelectedWorkbenchId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(WORKBENCH_STORAGE_KEY) || "default";
+    } catch {
+      return "default";
+    }
+  });
+
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  /** 右下角悬浮客服：false 为收起仅圆钮，true 为展开上方面板 */
+  const [customerServiceOpen, setCustomerServiceOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [activeTab, setActiveTab] = useState("全部");
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
@@ -165,6 +213,75 @@ export const HomePage = () => {
     setCreateModalOpen(true);
   };
 
+  const workbenchButtonLabel =
+    selectedWorkbenchId === "default" ? "企业默认工作台" : "企业默认工作台";
+
+  const workbenchMenuItems = useMemo<MenuProps["items"]>(
+    () => [
+      {
+        type: "group",
+        label: "选择工作台",
+        children: [
+          {
+            key: "wb-default",
+            label: (
+              <span style={{ fontWeight: selectedWorkbenchId === "default" ? 600 : 400 }}>
+                企业默认工作台{" "}
+                <Tag color="processing" style={{ margin: 0, marginLeft: 6, fontSize: 10, padding: "0 4px" }}>
+                  默认
+                </Tag>
+              </span>
+            ),
+          },
+        ],
+      },
+      { type: "divider" },
+      {
+        key: "set-enterprise",
+        icon: <SettingOutlined />,
+        label: "设置企业工作台",
+      },
+      {
+        key: "set-mine",
+        icon: <UserOutlined />,
+        label: "设置我的工作台",
+      },
+      {
+        key: "workbench-settings",
+        icon: <DesktopOutlined />,
+        label: "工作台设置",
+      },
+    ],
+    [selectedWorkbenchId],
+  );
+
+  const onWorkbenchMenuClick = useCallback(
+    ({ key }: { key: string }) => {
+      if (key === "wb-default") {
+        setSelectedWorkbenchId("default");
+        try {
+          localStorage.setItem(WORKBENCH_STORAGE_KEY, "default");
+        } catch {
+          /* ignore */
+        }
+        message.success("已切换为企业默认工作台");
+        return;
+      }
+      if (key === "set-enterprise") {
+        navigate("/settings/system");
+        return;
+      }
+      if (key === "set-mine") {
+        navigate("/settings/profile");
+        return;
+      }
+      if (key === "workbench-settings") {
+        navigate("/settings/workbench");
+      }
+    },
+    [navigate],
+  );
+
   const handleAppClick = (appId: string) => {
     // 点击应用进入应用管理页面，可以看到该应用下的所有表单
     navigate(`/app/${appId}`);
@@ -203,8 +320,8 @@ export const HomePage = () => {
       case "plugin":
         navigate("/settings/plugin");
         break;
-      case "ai":
-        navigate("/settings/ai");
+      case "enterprise":
+        navigate("/settings/enterprise");
         break;
       case "system":
         navigate("/settings/system");
@@ -310,17 +427,10 @@ export const HomePage = () => {
       onClick: () => handleMenuClick("plugin"),
     },
     {
-      key: "ai",
-      label: (
-        <Space>
-          <span>AI能力中心</span>
-          <Tag color="red" style={{ margin: 0, fontSize: 10, padding: "0 4px" }}>
-            new
-          </Tag>
-        </Space>
-      ),
-      icon: <ThunderboltOutlined />,
-      onClick: () => handleMenuClick("ai"),
+      key: "enterprise",
+      label: "企业管理",
+      icon: <BankOutlined />,
+      onClick: () => handleMenuClick("enterprise"),
     },
     {
       key: "system",
@@ -352,47 +462,106 @@ export const HomePage = () => {
   return (
     <div className="home-page">
       <div className="home-header">
-        <Space size="middle" style={{ width: "100%", justifyContent: "flex-end" }}>
-          <Button
-            type="text"
-            icon={<BellOutlined />}
-            style={{ fontSize: 18 }}
-            onClick={() => message.info("暂无通知")}
-          />
-          <Button
-            type="text"
-            icon={<QuestionCircleOutlined />}
-            style={{ fontSize: 18 }}
-            onClick={() => message.info("客服功能开发中")}
-          >
-            客服
-          </Button>
-          <Button
-            type="primary"
-            size="large"
-            icon={<PlusOutlined />}
-            onClick={handleCreateApp}
-          >
-            创建应用
-          </Button>
-          <Dropdown
-            menu={{ items: userMenuItems }}
-            placement="bottomRight"
-            trigger={["click"]}
-          >
-            <Space style={{ cursor: "pointer" }}>
-              <Avatar
-                src={currentUserInfo?.avatar || user?.avatar}
-                icon={<UserOutlined />}
-                style={{ backgroundColor: "#1890ff" }}
+        <Space size="middle" style={{ width: "100%", justifyContent: "space-between" }}>
+          {/* 左侧：企业名称 */}
+          <Space size={8} style={{ minWidth: 0 }}>
+            <Typography.Text
+              strong
+              style={{
+                fontSize: 14,
+                maxWidth: isMobile ? 180 : 320,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={tenantName}
+            >
+              {tenantName}
+            </Typography.Text>
+          </Space>
+
+          {/* 右侧：工作台 / 帮助 / 通讯录 / 通知 / 用户菜单（客服在右下角圆形入口） */}
+          <Space size="middle">
+            <Dropdown
+              placement="bottomRight"
+              trigger={["click"]}
+              menu={{ items: workbenchMenuItems, onClick: onWorkbenchMenuClick }}
+            >
+              <Button
+                type="text"
+                style={{
+                  maxWidth: isMobile ? 140 : 220,
+                  color: "#333",
+                  fontWeight: 500,
+                  padding: "4px 8px",
+                }}
               >
-                {((currentUserInfo?.name || user?.name || currentUserInfo?.account || user?.account || "")[0] || "").toUpperCase()}
-              </Avatar>
-              <span style={{ fontSize: 14, color: "#333" }}>
-                {currentUserInfo?.name || user?.name || currentUserInfo?.account || user?.account || "未登录"}
-              </span>
-            </Space>
-          </Dropdown>
+                <Space size={6}>
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={workbenchButtonLabel}
+                  >
+                    {workbenchButtonLabel}
+                  </span>
+                  <DownOutlined style={{ fontSize: 10, color: "#8c8c8c" }} />
+                </Space>
+              </Button>
+            </Dropdown>
+
+            {/* 帮助中心（右侧） */}
+            <Dropdown
+              placement="bottomRight"
+              trigger={["click"]}
+              menu={{
+                items: [
+                  { key: "docs-user", label: "使用文档", onClick: () => navigate("/docs/user") },
+                  { key: "docs-dev", label: "开发文档", onClick: () => navigate("/docs/dev") },
+                  { key: "docs-changelog", label: "更新日志", onClick: () => navigate("/docs/changelog") },
+                  { key: "docs-api", label: "接口文档", onClick: () => navigate("/docs/api") },
+                ],
+              }}
+            >
+              <Button type="text" icon={<QuestionCircleOutlined />} style={{ fontSize: 18 }} title="帮助中心" />
+            </Dropdown>
+
+            {/* 通讯录 */}
+            <Button
+              type="text"
+              icon={<ContactsOutlined />}
+              style={{ fontSize: 18 }}
+              title="通讯录"
+              onClick={() => navigate("/contacts")}
+            />
+
+            <Button
+              type="text"
+              icon={<BellOutlined />}
+              style={{ fontSize: 18 }}
+              onClick={() => message.info("暂无通知")}
+            />
+            <Dropdown
+              menu={{ items: userMenuItems }}
+              placement="bottomRight"
+              trigger={["click"]}
+            >
+              <Space style={{ cursor: "pointer" }}>
+                <Avatar
+                  src={currentUserInfo?.avatar || user?.avatar}
+                  icon={<UserOutlined />}
+                  style={{ backgroundColor: "#1890ff" }}
+                >
+                  {((currentUserInfo?.name || user?.name || currentUserInfo?.account || user?.account || "")[0] || "").toUpperCase()}
+                </Avatar>
+                <span style={{ fontSize: 14, color: "#333" }}>
+                  {currentUserInfo?.name || user?.name || currentUserInfo?.account || user?.account || "未登录"}
+                </span>
+              </Space>
+            </Dropdown>
+          </Space>
         </Space>
       </div>
 
@@ -401,12 +570,12 @@ export const HomePage = () => {
           {/* 上面两个：通知区域和推广横幅 */}
           <Row gutter={[16, 16]} style={{ flexShrink: 0 }}>
             <Col xs={24} lg={16}>
-              <Card className="notification-section" bodyStyle={{ padding: "20px" }}>
+              <Card className="notification-section" bodyStyle={{ padding: isMobile ? 12 : "20px" }}>
                 <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 8 }}>
                   <Title level={5} style={{ margin: 0 }}>我的流程</Title>
                   <Text type="secondary">常用入口</Text>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: isMobile ? 8 : 16 }}>
                   <Card hoverable style={{ flex: 1, textAlign: "center" }} onClick={() => navigate("/workflow/tasks?tab=pending")}>
                     <Space direction="vertical">
                       <Badge count={pendingTasks?.length || 0} overflowCount={99}>
@@ -477,7 +646,7 @@ export const HomePage = () => {
           <Card 
             className="section" 
             style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}
-            bodyStyle={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px", minHeight: 0, overflow: "hidden" }}
+            bodyStyle={{ flex: 1, display: "flex", flexDirection: "column", padding: isMobile ? 12 : "20px", minHeight: 0, overflow: "hidden" }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
               <div style={{ flex: 1 }}>
@@ -519,19 +688,19 @@ export const HomePage = () => {
               </div>
               
               {/* 右侧搜索和新建应用 */}
-              <div style={{ marginLeft: 16, flexShrink: 0 }}>
+              <div style={{ marginLeft: isMobile ? 8 : 16, flexShrink: 0 }}>
                 <Space size="small">
                   <Input
                     placeholder="搜索应用或表单名称"
                     prefix={<SearchOutlined />}
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
-                    style={{ width: 200 }}
+                    style={{ width: isMobile ? 140 : 200 }}
                     allowClear
                     size="small"
                   />
                   <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateApp} size="small">
-                    新建应用
+                    {isMobile ? "新建" : "新建应用"}
                   </Button>
                 </Space>
               </div>
@@ -663,6 +832,44 @@ export const HomePage = () => {
             </div>
           </Card>
         </div>
+      </div>
+
+      {/* 右下角圆形悬浮客服（宜搭式）：收起仅圆钮，点击展开上方面板 */}
+      <div className="home-cs-fab-wrap">
+        {customerServiceOpen ? (
+          <div className="home-cs-popover">
+            <div className="home-cs-panel-head">
+              <Space>
+                <CustomerServiceOutlined style={{ color: "#597ef7" }} />
+                <Typography.Text strong>在线客服</Typography.Text>
+              </Space>
+              <Button
+                type="text"
+                size="small"
+                icon={<CloseOutlined />}
+                aria-label="收起客服"
+                onClick={() => setCustomerServiceOpen(false)}
+              />
+            </div>
+            <div className="home-cs-panel-body">
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                如需帮助，可查看帮助中心文档；人工客服接入能力后续开放。
+              </Typography.Paragraph>
+              <Button type="link" style={{ padding: 0 }} onClick={() => navigate("/docs/user")}>
+                打开使用文档
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="home-cs-fab"
+          title={customerServiceOpen ? "收起" : "客服"}
+          aria-expanded={customerServiceOpen}
+          onClick={() => setCustomerServiceOpen((v) => !v)}
+        >
+          <CustomerServiceOutlined style={{ fontSize: 26 }} />
+        </button>
       </div>
 
       {/* 租户切换弹窗 */}

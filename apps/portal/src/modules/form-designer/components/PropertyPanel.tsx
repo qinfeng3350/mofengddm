@@ -250,6 +250,27 @@ function buildFieldSpanSelectOptions(
   return base;
 }
 
+function collectSchemaFields(schema: any): any[] {
+  const result = new Map<string, any>();
+  const cfg = schema || {};
+  (cfg.fields || []).forEach((f: any) => {
+    if (f?.fieldId) result.set(String(f.fieldId), f);
+  });
+  (cfg.elements || []).forEach((el: any) => {
+    if (el && "fieldId" in el && el.fieldId && !result.has(String(el.fieldId))) {
+      result.set(String(el.fieldId), el);
+    }
+    if (el && "children" in el && Array.isArray(el.children)) {
+      el.children.forEach((child: any) => {
+        if (child && "fieldId" in child && child.fieldId && !result.has(String(child.fieldId))) {
+          result.set(String(child.fieldId), child);
+        }
+      });
+    }
+  });
+  return Array.from(result.values());
+}
+
 /**
  * 属性面板里 Ant Form 与 useForm 单例会「合并」 setFieldsValue，切换字段时必须 reset，
  * 否则上一字段的 advanced.defaultMode 等会残留，表现为新字段默认变成公式编辑、多字段互相串值。
@@ -277,6 +298,7 @@ function mergeFieldForPropertiesForm(field: any, formSchema?: any): Record<strin
 
   return {
     ...field,
+    dataSource: adv.optionsSource ?? "custom",
     advanced: adv,
   };
 }
@@ -294,6 +316,7 @@ const FieldPropertiesPanel = ({
   const [form] = Form.useForm();
   const [fieldTab, setFieldTab] = useState("basic");
   const [formulaDefaultModalOpen, setFormulaDefaultModalOpen] = useState(false);
+  const [dataLinkModalOpen, setDataLinkModalOpen] = useState(false);
   const prevFieldIdRef = useRef<string | undefined>(undefined);
   
   // 只在字段切换时（fieldId 变化）重置并灌入当前字段，避免 Form 合并残留上一字段的状态
@@ -336,6 +359,54 @@ const FieldPropertiesPanel = ({
     },
   });
   const currentDepartmentId = currentUserWithDept?.departmentId != null ? String(currentUserWithDept.departmentId) : undefined;
+  const [searchParams] = useSearchParams();
+  const appId = searchParams.get("appId");
+  const applicationId = useFormDesignerStore((state) => state.applicationId);
+  const finalAppId = appId || applicationId;
+  const optionDataSource = Form.useWatch("dataSource", form) || field.advanced?.optionsSource || "custom";
+  const optionsRelatedFormId = Form.useWatch(["advanced", "optionsRelatedFormId"], form) as
+    | string
+    | undefined;
+  const optionColorful = Form.useWatch(["advanced", "colorful"], form) === true;
+  const defaultDataLink = (Form.useWatch(["advanced", "defaultDataLink"], form) as any) || field.advanced?.defaultDataLink;
+  const currentFormFields = useMemo(
+    () =>
+      collectSchemaFields(formSchema).filter(
+        (f: any) => String(f?.fieldId || "") !== String(field.fieldId || ""),
+      ),
+    [formSchema, field.fieldId],
+  );
+
+  const { data: optionFormsList, isLoading: optionFormsLoading } = useQuery({
+    queryKey: ["option-field-forms", finalAppId],
+    queryFn: () => formDefinitionApi.getListByApplication(finalAppId!),
+    enabled:
+      !!finalAppId &&
+      (field.type === FieldTypeEnum.Enum.select ||
+        field.type === FieldTypeEnum.Enum.radio ||
+        field.type === FieldTypeEnum.Enum.checkbox ||
+        field.type === FieldTypeEnum.Enum.multiselect) &&
+      optionDataSource === "relatedForm",
+    staleTime: 30_000,
+  });
+
+  const optionRelatedFormDefinition = useMemo(() => {
+    if (!optionFormsList || !optionsRelatedFormId) return null;
+    return (optionFormsList as any[]).find(
+      (f) => String(f.formId) === String(optionsRelatedFormId),
+    ) || null;
+  }, [optionFormsList, optionsRelatedFormId]);
+
+  const optionRelatedFields = useMemo(() => {
+    const cfg: any = (optionRelatedFormDefinition as any)?.config || {};
+    const fields = Array.isArray(cfg.fields) ? cfg.fields : [];
+    return fields
+      .filter((f: any) => f && f.fieldId)
+      .map((f: any) => ({
+        label: f.label ? `${f.label}` : String(f.fieldId),
+        value: String(f.fieldId),
+      }));
+  }, [optionRelatedFormDefinition]);
 
   // 如果用户已经选择“本部门”但当前用户部门还没加载完，
   // 等拿到 departmentId 后自动补齐 defaultValue，避免出现“选了但没有默认值”的情况。
@@ -553,70 +624,126 @@ const FieldPropertiesPanel = ({
         field.type === FieldTypeEnum.Enum.checkbox ||
         field.type === FieldTypeEnum.Enum.multiselect) && (
         <>
-          <Form.Item
-            label="数据来源"
-            name="dataSource"
-            initialValue="custom"
-          >
-            <Radio.Group>
-              <Radio value="custom">自定义</Radio>
-              <Radio value="relatedForm" disabled>
-                关联已有表单数据
-              </Radio>
-            </Radio.Group>
+          <Form.Item label="选项" name="dataSource">
+            <Select
+              options={[
+                { value: "relatedForm", label: "关联其他表单数据" },
+                { value: "custom", label: "自定义" },
+                { value: "dataLink", label: "数据联动" },
+              ]}
+              onChange={(v) => {
+                const next = String(v || "custom");
+                form.setFieldValue("dataSource", next);
+                onValuesChange({
+                  advanced: {
+                    ...(field.advanced || {}),
+                    optionsSource: next,
+                  },
+                });
+              }}
+            />
           </Form.Item>
 
-          <Form.Item
-            noStyle
-            shouldUpdate={(prevValues, currentValues) =>
-              prevValues.dataSource !== currentValues.dataSource ||
-              prevValues.options !== currentValues.options
-            }
-          >
-            {({ getFieldValue }) =>
-              getFieldValue("dataSource") === "custom" ? (
-                <Form.Item
-                  label="选项"
-                  name="options"
-                  rules={[
-                    {
-                      validator: (_, value) => {
-                        if (!value || value.length === 0) {
-                          return Promise.reject(new Error("至少需要添加一个选项"));
-                        }
-                        return Promise.resolve();
+          {optionDataSource === "relatedForm" ? (
+            <>
+              <Form.Item label="关联其他表单数据" name={["advanced", "optionsRelatedFormId"]}>
+                <Select
+                  placeholder={optionFormsLoading ? "加载中..." : finalAppId ? "请选择关联表单" : "请先选择应用"}
+                  loading={optionFormsLoading}
+                  disabled={!finalAppId || optionFormsLoading}
+                  options={(optionFormsList || []).map((f: any) => ({
+                    label: f.formName || f.formId,
+                    value: String(f.formId),
+                  }))}
+                  onChange={(v) => {
+                    form.setFieldValue(["advanced", "optionsRelatedFormId"], v);
+                    form.setFieldValue(["advanced", "optionsRelatedLabelFieldId"], undefined);
+                    onValuesChange({
+                      advanced: {
+                        ...(field.advanced || {}),
+                        optionsSource: "relatedForm",
+                        optionsRelatedFormId: String(v || ""),
+                        optionsRelatedLabelFieldId: undefined,
                       },
+                    });
+                  }}
+                />
+              </Form.Item>
+              <Form.Item label="展示字段" name={["advanced", "optionsRelatedLabelFieldId"]}>
+                <Select
+                  placeholder={optionsRelatedFormId ? "请选择展示字段" : "请先选择关联表单"}
+                  disabled={!optionsRelatedFormId}
+                  options={optionRelatedFields}
+                  onChange={(v) => {
+                    form.setFieldValue(["advanced", "optionsRelatedLabelFieldId"], v);
+                    onValuesChange({
+                      advanced: {
+                        ...(field.advanced || {}),
+                        optionsSource: "relatedForm",
+                        optionsRelatedFormId: String(optionsRelatedFormId || ""),
+                        optionsRelatedLabelFieldId: String(v || ""),
+                      },
+                    });
+                  }}
+                />
+              </Form.Item>
+              <Form.Item name={["advanced", "optionsAllowOther"]} valuePropName="checked">
+                <Checkbox>添加其他选项</Checkbox>
+              </Form.Item>
+              <Form.Item name={["advanced", "optionsOtherAtBottom"]} valuePropName="checked">
+                <Checkbox>其他选项位于底部</Checkbox>
+              </Form.Item>
+              <Form.Item name={["advanced", "optionsAllowCreateRelated"]} valuePropName="checked">
+                <Checkbox>允许新增关联表数据</Checkbox>
+              </Form.Item>
+            </>
+          ) : optionDataSource === "dataLink" ? (
+            <Form.Item>
+              <Button block type="default">
+                数据联动设置
+              </Button>
+            </Form.Item>
+          ) : (
+            <Form.Item
+              label="选项"
+              name="options"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (!value || value.length === 0) {
+                      return Promise.reject(new Error("至少需要添加一个选项"));
+                    }
+                    return Promise.resolve();
+                  },
+                },
+              ]}
+            >
+              <OptionsConfigPanel
+                fieldType={field.type}
+                allowColor={
+                  (field.type === FieldTypeEnum.Enum.select || field.type === FieldTypeEnum.Enum.multiselect) &&
+                  optionColorful
+                }
+                value={form.getFieldValue("options") || field.options || []}
+                onChange={(options) => {
+                  form.setFieldValue("options", options);
+                  const defaultOption = options.find((opt: any) => opt?.isDefault);
+                  if (defaultOption) {
+                    form.setFieldValue("defaultValue", defaultOption.value);
+                    onValuesChange({ options, defaultValue: defaultOption.value });
+                  } else {
+                    onValuesChange({ options });
+                  }
+                  onValuesChange({
+                    advanced: {
+                      ...(field.advanced || {}),
+                      optionsSource: "custom",
                     },
-                  ]}
-                >
-                  <OptionsConfigPanel
-                    fieldType={field.type}
-                    allowColor={field.type === FieldTypeEnum.Enum.select || field.type === FieldTypeEnum.Enum.multiselect}
-                    value={getFieldValue("options") || field.options || []}
-                    onChange={(options) => {
-                      form.setFieldValue("options", options);
-                      // 同步默认值：如果存在默认选中项则同步到字段 defaultValue，确保表单渲染时默认选中生效
-                      const defaultOption = options.find((opt: any) => opt?.isDefault);
-                      if (defaultOption) {
-                        form.setFieldValue("defaultValue", defaultOption.value);
-                        onValuesChange({ options, defaultValue: defaultOption.value });
-                      } else {
-                        onValuesChange({ options });
-                      }
-                    }}
-                  />
-                </Form.Item>
-              ) : (
-                <Form.Item label="关联表单">
-                  <Alert
-                    message="关联表单数据功能开发中"
-                    type="info"
-                    showIcon
-                  />
-                </Form.Item>
-              )
-            }
-          </Form.Item>
+                  });
+                }}
+              />
+            </Form.Item>
+          )}
 
           {/* 移动端显示模式（仅下拉框） */}
           {field.type === FieldTypeEnum.Enum.select && (
@@ -692,10 +819,21 @@ const FieldPropertiesPanel = ({
                 name={["advanced", "defaultMode"]}
                 initialValue={field.advanced?.defaultMode || "none"}
               >
-                <Select>
+                <Select
+                  onChange={(mode) => {
+                    const nextAdvanced = {
+                      ...(field.advanced || {}),
+                      ...(form.getFieldValue("advanced") || {}),
+                      defaultMode: mode,
+                    };
+                    form.setFieldsValue({ advanced: nextAdvanced });
+                    onValuesChange({ advanced: nextAdvanced });
+                  }}
+                >
                   <Select.Option value="none">无</Select.Option>
                   <Select.Option value="currentUser">当前登录人</Select.Option>
                   <Select.Option value="custom">自定义</Select.Option>
+                  <Select.Option value="dataLink">数据联动</Select.Option>
                 </Select>
               </Form.Item>
               <Form.Item noStyle shouldUpdate={(prev, curr) => prev.advanced?.defaultMode !== curr.advanced?.defaultMode}>
@@ -703,6 +841,17 @@ const FieldPropertiesPanel = ({
                   getFieldValue(["advanced", "defaultMode"]) === "custom" && (
                     <Form.Item label="自定义默认值" name="defaultValue">
                       <Input placeholder="请输入用户ID（暂不支持选择器）" />
+                    </Form.Item>
+                  )
+                }
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(prev, curr) => prev.advanced?.defaultMode !== curr.advanced?.defaultMode}>
+                {({ getFieldValue }) =>
+                  getFieldValue(["advanced", "defaultMode"]) === "dataLink" && (
+                    <Form.Item>
+                      <Button block type="default" onClick={() => setDataLinkModalOpen(true)}>
+                        数据联动设置
+                      </Button>
                     </Form.Item>
                   )
                 }
@@ -846,7 +995,13 @@ const FieldPropertiesPanel = ({
                 <Select>
                   <Select.Option value="custom">自定义</Select.Option>
                   <Select.Option value="dataLink">数据联动</Select.Option>
-                  <Select.Option value="formulaEdit">公式编辑</Select.Option>
+                  {/* 选择类控件默认值不提供公式计算（按参考产品交互） */}
+                  {field.type === FieldTypeEnum.Enum.select ||
+                  field.type === FieldTypeEnum.Enum.radio ||
+                  field.type === FieldTypeEnum.Enum.checkbox ||
+                  field.type === FieldTypeEnum.Enum.multiselect ? null : (
+                    <Select.Option value="formulaEdit">公式编辑</Select.Option>
+                  )}
                 </Select>
               </Form.Item>
               <Form.Item
@@ -860,7 +1015,7 @@ const FieldPropertiesPanel = ({
                   if (mode === "dataLink") {
                     return (
                       <Form.Item>
-                        <Button block type="default">
+                        <Button block type="default" onClick={() => setDataLinkModalOpen(true)}>
                           数据联动设置
                         </Button>
                       </Form.Item>
@@ -963,7 +1118,196 @@ const FieldPropertiesPanel = ({
         excludeFieldId={field.fieldId}
         valueKind={field.type === FieldTypeEnum.Enum.number ? "number" : "text"}
       />
+      <DefaultDataLinkModal
+        open={dataLinkModalOpen}
+        onCancel={() => setDataLinkModalOpen(false)}
+        onConfirm={(config) => {
+          const prevAdv = form.getFieldValue("advanced") || field.advanced || {};
+          const nextAdvanced = {
+            ...prevAdv,
+            defaultMode: "dataLink",
+            defaultDataLink: config,
+          };
+          form.setFieldsValue({ advanced: nextAdvanced });
+          onValuesChange({ advanced: nextAdvanced });
+          setDataLinkModalOpen(false);
+        }}
+        initialValue={defaultDataLink}
+        currentField={field}
+        currentFormFields={currentFormFields}
+      />
     </>
+  );
+};
+
+const DefaultDataLinkModal = ({
+  open,
+  onCancel,
+  onConfirm,
+  initialValue,
+  currentField,
+  currentFormFields,
+}: {
+  open: boolean;
+  onCancel: () => void;
+  onConfirm: (config: Record<string, unknown>) => void;
+  initialValue?: any;
+  currentField: any;
+  currentFormFields: any[];
+}) => {
+  const [form] = Form.useForm();
+  const [searchParams] = useSearchParams();
+  const appId = searchParams.get("appId");
+  const applicationId = useFormDesignerStore((state) => state.applicationId);
+  const finalAppId = appId || applicationId;
+  const relatedFormId = Form.useWatch("relatedFormId", form) as string | undefined;
+
+  const { data: formsList, isLoading: formsLoading } = useQuery({
+    queryKey: ["default-data-link-forms", finalAppId],
+    queryFn: () => formDefinitionApi.getListByApplication(finalAppId!),
+    enabled: open && !!finalAppId,
+  });
+
+  const { data: relatedFormDefinition, isLoading: relatedFieldsLoading } = useQuery({
+    queryKey: ["default-data-link-related-form", relatedFormId],
+    queryFn: () => formDefinitionApi.getById(String(relatedFormId)),
+    enabled: open && !!relatedFormId,
+  });
+
+  const relatedFields = useMemo(() => collectSchemaFields(relatedFormDefinition?.config || {}), [relatedFormDefinition]);
+
+  useEffect(() => {
+    if (!open) return;
+    const seededConditions = Array.isArray(initialValue?.conditions) && initialValue.conditions.length > 0
+      ? initialValue.conditions
+      : [{ relatedFieldId: undefined, currentFieldId: undefined, operator: "eq" }];
+    form.setFieldsValue({
+      relatedFormId: initialValue?.relatedFormId,
+      matchMode: initialValue?.matchMode || "all",
+      conditions: seededConditions,
+      targetRelatedFieldId: initialValue?.targetRelatedFieldId,
+    });
+  }, [open, initialValue, form]);
+
+  return (
+    <Modal
+      title="数据联动"
+      open={open}
+      onCancel={onCancel}
+      width={980}
+      onOk={async () => {
+        const values = await form.validateFields();
+        const config = {
+          relatedFormId: String(values.relatedFormId || ""),
+          matchMode: values.matchMode === "any" ? "any" : "all",
+          conditions: (Array.isArray(values.conditions) ? values.conditions : [])
+            .filter((c: any) => c?.relatedFieldId && c?.currentFieldId)
+            .map((c: any) => ({
+              relatedFieldId: String(c.relatedFieldId),
+              currentFieldId: String(c.currentFieldId),
+              operator: "eq",
+            })),
+          targetRelatedFieldId: String(values.targetRelatedFieldId || ""),
+        };
+        onConfirm(config);
+      }}
+    >
+      <Form form={form} layout="vertical">
+        <Form.Item
+          label="数据关联表"
+          name="relatedFormId"
+          rules={[{ required: true, message: "请选择数据关联表" }]}
+        >
+          <Select
+            placeholder={formsLoading ? "加载中..." : "请选择关联表单"}
+            showSearch
+            loading={formsLoading}
+            options={(formsList || [])
+              .filter((f: any) => f?.formId)
+              .map((f: any) => ({ label: f.formName || f.formId, value: String(f.formId) }))}
+          />
+        </Form.Item>
+
+        <Space align="center" style={{ marginBottom: 8 }}>
+          <Typography.Text>满足以下</Typography.Text>
+          <Form.Item name="matchMode" noStyle initialValue="all">
+            <Select style={{ width: 100 }}>
+              <Select.Option value="all">所有</Select.Option>
+              <Select.Option value="any">任一</Select.Option>
+            </Select>
+          </Form.Item>
+          <Typography.Text>条件时</Typography.Text>
+        </Space>
+
+        <Form.List name="conditions">
+          {(fields, { add, remove }) => (
+            <Space direction="vertical" style={{ width: "100%" }}>
+              {fields.map((f) => (
+                <Space key={f.key} align="baseline" style={{ width: "100%" }}>
+                  <Form.Item
+                    name={[f.name, "relatedFieldId"]}
+                    rules={[{ required: true, message: "请选择关联表字段" }]}
+                    style={{ width: 280, marginBottom: 0 }}
+                  >
+                    <Select
+                      placeholder="关联表字段"
+                      loading={relatedFieldsLoading}
+                      options={relatedFields.map((rf: any) => ({
+                        label: rf.label || rf.fieldId,
+                        value: String(rf.fieldId),
+                      }))}
+                    />
+                  </Form.Item>
+                  <Form.Item name={[f.name, "operator"]} initialValue="eq" style={{ width: 100, marginBottom: 0 }}>
+                    <Select options={[{ label: "等于", value: "eq" }]} />
+                  </Form.Item>
+                  <Form.Item
+                    name={[f.name, "currentFieldId"]}
+                    rules={[{ required: true, message: "请选择当前表字段" }]}
+                    style={{ width: 280, marginBottom: 0 }}
+                  >
+                    <Select
+                      placeholder="当前表单字段"
+                      options={currentFormFields.map((cf: any) => ({
+                        label: cf.label || cf.fieldId,
+                        value: String(cf.fieldId),
+                      }))}
+                    />
+                  </Form.Item>
+                  <Button type="link" danger onClick={() => remove(f.name)}>
+                    删除
+                  </Button>
+                </Space>
+              ))}
+              <Button type="link" onClick={() => add({ operator: "eq" })} style={{ padding: 0 }}>
+                + 添加关联条件
+              </Button>
+            </Space>
+          )}
+        </Form.List>
+
+        <Space align="center" style={{ marginTop: 12 }}>
+          <Typography.Text>当前表单的</Typography.Text>
+          <Tag>{currentField?.label || currentField?.fieldId || "当前字段"}</Tag>
+          <Typography.Text>联动显示为</Typography.Text>
+          <Form.Item
+            name="targetRelatedFieldId"
+            rules={[{ required: true, message: "请选择关联表字段" }]}
+            style={{ width: 280, marginBottom: 0 }}
+          >
+            <Select
+              placeholder="关联表字段"
+              loading={relatedFieldsLoading}
+              options={relatedFields.map((rf: any) => ({
+                label: rf.label || rf.fieldId,
+                value: String(rf.fieldId),
+              }))}
+            />
+          </Form.Item>
+          <Typography.Text>中对应值</Typography.Text>
+        </Space>
+      </Form>
+    </Modal>
   );
 };
 

@@ -1,4 +1,13 @@
-import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  UseGuards,
+  Request,
+  Req,
+} from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuthService } from './auth.service';
@@ -7,6 +16,15 @@ import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from './decorators/public.decorator';
 import { TenantEntity } from '../../database/entities/tenant.entity';
+
+function getClientIp(req: ExpressRequest): string {
+  const xf = req.headers['x-forwarded-for'];
+  if (typeof xf === 'string' && xf.length) {
+    return xf.split(',')[0].trim().slice(0, 64);
+  }
+  const raw = req.socket?.remoteAddress || req.ip || '';
+  return String(raw).replace(/^::ffff:/, '').slice(0, 64);
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/auth')
@@ -25,8 +43,12 @@ export class AuthController {
 
   @Public()
   @Post('login')
-  login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
+  login(@Body() loginDto: LoginDto, @Req() req: ExpressRequest) {
+    const ua = req.headers['user-agent'];
+    return this.authService.login(loginDto, {
+      ip: getClientIp(req),
+      userAgent: Array.isArray(ua) ? ua[0] : ua,
+    });
   }
 
   @Get('profile')
@@ -135,12 +157,17 @@ export class AuthController {
   async switchTenant(
     @Request() req: any,
     @Body() body: { tenantId: string },
+    @Req() ereq: ExpressRequest,
   ) {
     const userId = req.user?.id || req.user?.userId;
     if (!userId) {
       throw new Error('无法确定当前用户');
     }
-    return this.authService.switchTenantByUserId(String(userId), body.tenantId);
+    const ua = ereq.headers['user-agent'];
+    return this.authService.switchTenantByUserId(String(userId), body.tenantId, {
+      ip: getClientIp(ereq),
+      userAgent: Array.isArray(ua) ? ua[0] : ua,
+    });
   }
 }
 

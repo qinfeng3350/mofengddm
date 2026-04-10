@@ -1,7 +1,7 @@
 // @ts-nocheck
-import { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { Layout, Input, Button, Space, Tag, message, Drawer, Dropdown, Avatar, Typography, Modal, Form, Table, Popconfirm, Spin, Card } from "antd";
+import { Layout, Input, Button, Space, message, Drawer, Dropdown, Avatar, Typography, Modal, Form, Table, Popconfirm, Spin, Card } from "antd";
 import {
   PlusOutlined,
   DownloadOutlined, 
@@ -16,15 +16,10 @@ import {
   SearchOutlined,
   SettingOutlined,
   FileTextOutlined,
-  UserOutlined,
   MoreOutlined,
   DashboardOutlined,
   ApartmentOutlined,
-  TeamOutlined,
-  LockOutlined,
   ThunderboltOutlined,
-  GlobalOutlined,
-  LogoutOutlined,
   EditOutlined,
   HolderOutlined,
   PrinterOutlined,
@@ -34,6 +29,7 @@ import {
   EllipsisOutlined,
   HomeOutlined,
 } from "@ant-design/icons";
+import { UserAccountDropdown } from "@/components/UserAccountDropdown";
 import { FormDataList } from "@/components/FormDataList";
 import { FormRenderer } from "@/components/FormRenderer";
 import { WorkflowInstancePanel } from "@/components/WorkflowInstancePanel";
@@ -84,6 +80,7 @@ import { formDataApi } from "@/api/formData";
 import { workflowApi } from "@/api/workflow";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import dayjs from "dayjs";
 import styles from "./RuntimeListPage.module.css";
 import { convertToDataVData } from "@/modules/datav-designer/DataVDesigner";
@@ -211,6 +208,8 @@ export const RuntimeListPage = () => {
   );
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  const isMobile = useIsMobile();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [formDrawerOpen, setFormDrawerOpen] = useState(false);
   const [viewDrawerOpen, setViewDrawerOpen] = useState(false);
   const [viewingRecordId, setViewingRecordId] = useState<string | null>(null);
@@ -477,45 +476,6 @@ export const RuntimeListPage = () => {
   const handleAppNameCancel = () => {
     setAppNameValue(appInfo?.name || "");
     setEditingAppName(false);
-  };
-
-  const handleLogout = () => {
-    useAuthStore.getState().clearAuth();
-    navigate("/login");
-  };
-
-  const handleMenuClick = (key: string) => {
-    switch (key) {
-      case "profile":
-        navigate("/settings/profile");
-        break;
-      case "organization":
-        navigate("/settings/organization");
-        break;
-      case "permission":
-        navigate("/settings/permission");
-        break;
-      case "plugin":
-        navigate("/settings/plugin");
-        break;
-      case "ai":
-        message.info("AI能力中心功能待实现");
-        break;
-      case "system":
-        navigate("/settings/system");
-        break;
-      case "template":
-        message.info("模板中心功能待实现");
-        break;
-      case "website":
-        window.open("/", "_blank");
-        break;
-      case "logout":
-        handleLogout();
-        break;
-      default:
-        break;
-    }
   };
 
   // 加载选中报表的所有组件配置和数据，用于在当前页面内展示报表
@@ -975,99 +935,6 @@ export const RuntimeListPage = () => {
     })();
   }, [appId, selectedDatavScreenId]);
 
-  // 获取当前用户信息（包括租户信息）
-  const { data: currentUserInfo } = useQuery({
-    queryKey: ["current-user-info"],
-    queryFn: async () => {
-      try {
-        const res = await apiClient.get("/auth/profile");
-        return res;
-      } catch {
-        return null;
-      }
-    },
-  });
-
-  const userMenuItems = [
-    {
-      key: "tenant",
-      label: (
-        <div style={{ padding: "8px 0" }}>
-          <div style={{ fontWeight: 500 }}>
-            {currentUserInfo?.tenant?.name || currentUserInfo?.tenant?.code || "默认租户"}
-          </div>
-          <Button type="link" size="small" style={{ padding: 0, height: "auto" }}>
-            切换
-          </Button>
-        </div>
-      ),
-      disabled: true,
-    },
-    { type: "divider" },
-    {
-      key: "profile",
-      label: "个人信息",
-      icon: <UserOutlined />,
-      onClick: () => handleMenuClick("profile"),
-    },
-    {
-      key: "organization",
-      label: "组织机构",
-      icon: <TeamOutlined />,
-      onClick: () => handleMenuClick("organization"),
-    },
-    {
-      key: "permission",
-      label: "权限管理",
-      icon: <LockOutlined />,
-      onClick: () => handleMenuClick("permission"),
-    },
-    {
-      key: "plugin",
-      label: "插件中心",
-      icon: <AppstoreOutlined />,
-      onClick: () => handleMenuClick("plugin"),
-    },
-    {
-      key: "ai",
-      label: (
-        <Space>
-          <span>AI能力中心</span>
-          <Tag color="red" style={{ margin: 0, fontSize: 10, padding: "0 4px" }}>
-            new
-          </Tag>
-        </Space>
-      ),
-      icon: <ThunderboltOutlined />,
-      onClick: () => handleMenuClick("ai"),
-    },
-    {
-      key: "system",
-      label: "系统管理",
-      icon: <SettingOutlined />,
-      onClick: () => handleMenuClick("system"),
-    },
-    {
-      key: "template",
-      label: "模板中心",
-      icon: <FileTextOutlined />,
-      onClick: () => handleMenuClick("template"),
-    },
-    {
-      key: "website",
-      label: "墨枫官网",
-      icon: <GlobalOutlined />,
-      onClick: () => handleMenuClick("website"),
-    },
-    { type: "divider" },
-    {
-      key: "logout",
-      label: "退出登录",
-      icon: <LogoutOutlined />,
-      onClick: () => handleMenuClick("logout"),
-    },
-  ];
-
   // 获取应用下的表单列表（左侧导航）
   const { data: forms } = useQuery({
     queryKey: ["applicationForms", appId],
@@ -1524,7 +1391,7 @@ export const RuntimeListPage = () => {
     <Layout style={{ minHeight: "100vh", background: "#f5f5f5" }}>
       {/* 顶部导航栏 */}
       <Layout.Header style={{ 
-        padding: "0 24px", 
+        padding: isMobile ? "0 12px" : "0 24px", 
         background: "#fff", 
         borderBottom: "1px solid #f0f0f0",
         display: "flex",
@@ -1533,6 +1400,14 @@ export const RuntimeListPage = () => {
         height: 64,
       }}>
         <Space>
+          {isMobile && (
+            <Button
+              type="text"
+              icon={<MoreOutlined />}
+              onClick={() => setMobileMenuOpen(true)}
+              title="菜单"
+            />
+          )}
           <Button
             type="text" 
             icon={<HomeOutlined />}
@@ -1583,139 +1458,121 @@ export const RuntimeListPage = () => {
             }}
             disabled={!selectedFormId}
           >
-            设计表单
+            {isMobile ? "设计" : "设计表单"}
           </Button>
-          <Dropdown
-            menu={{ items: userMenuItems }}
-            placement="bottomRight"
-            trigger={["click"]}
-          >
-            <Space style={{ cursor: "pointer" }}>
-              <Avatar
-                size="small"
-                icon={<UserOutlined />}
-                style={{ backgroundColor: "#1890ff" }}
-              >
-                {user?.name?.[0] || user?.account?.[0] || "U"}
-              </Avatar>
-              <Typography.Text>{user?.name || user?.account || "用户"}</Typography.Text>
-            </Space>
-          </Dropdown>
+          <UserAccountDropdown showUserName />
         </Space>
       </Layout.Header>
 
       <Layout>
       {/* 左侧导航栏 - 表单列表 */}
-      <Sider 
-        width={280} 
-        style={{ 
-          background: "#fff", 
-          borderRight: "1px solid #f0f0f0",
-          overflow: "auto"
-        }}
-      >
-        {/* 搜索框 */}
-        <div style={{ padding: "16px" }}>
-          <Input
-            placeholder="搜索表单"
-            prefix={<SearchOutlined />}
-            suffix={
-              <Dropdown
-                menu={{
-                  items: [
-                    {
-                      key: "form",
-                      label: "表单",
-                      icon: <FileTextOutlined style={{ color: "#52c41a" }} />,
-                      onClick: () => {
-                        setNewFormModalOpen(true);
+      {isMobile ? (
+        <Drawer
+          title="菜单"
+          placement="left"
+          open={mobileMenuOpen}
+          onClose={() => setMobileMenuOpen(false)}
+          width={300}
+          destroyOnClose
+          bodyStyle={{ padding: 0 }}
+        >
+          <div style={{ padding: 16, borderBottom: "1px solid #f0f0f0" }}>
+            <Input
+              placeholder="搜索表单"
+              prefix={<SearchOutlined />}
+              suffix={
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: "form",
+                        label: "表单",
+                        icon: <FileTextOutlined style={{ color: "#52c41a" }} />,
+                        onClick: () => {
+                          setNewFormModalOpen(true);
+                        },
                       },
-                    },
-                    {
-                      key: "developer",
-                      label: "开发者页面",
-                      icon: <ThunderboltOutlined style={{ color: "#722ed1" }} />,
-                      onClick: () => {
-                        if (!appId) {
-                          message.warning("请先选择应用");
-                          return;
-                        }
-                        navigate(`/app/${appId}/developer`);
+                      {
+                        key: "developer",
+                        label: "开发者页面",
+                        icon: <ThunderboltOutlined style={{ color: "#722ed1" }} />,
+                        onClick: () => {
+                          if (!appId) {
+                            message.warning("请先选择应用");
+                            return;
+                          }
+                          navigate(`/app/${appId}/developer`);
+                        },
                       },
-                    },
-                    {
-                      key: "report",
-                      label: "报表",
-                      icon: <BarChartOutlined style={{ color: "#1890ff" }} />,
-                      onClick: () => {
-                        // 跳转到报表设计器，带上应用ID
-                        navigate(`/reports/designer?appId=${appId ?? ""}`);
+                      {
+                        key: "report",
+                        label: "报表",
+                        icon: <BarChartOutlined style={{ color: "#1890ff" }} />,
+                        onClick: () => {
+                          navigate(`/reports/designer?appId=${appId ?? ""}`);
+                        },
                       },
-                    },
-                    {
-                      key: "datav",
-                      label: "数据大屏",
-                      icon: <DashboardOutlined style={{ color: "#722ed1" }} />,
-                      onClick: () => {
-                        if (!appId) {
-                          message.warning("请先选择应用");
-                          return;
-                        }
-                        // 点击加号 → 数据大屏，始终是新建，不带 screenId
-                        navigate(`/datav/designer?appId=${appId}`);
+                      {
+                        key: "datav",
+                        label: "数据大屏",
+                        icon: <DashboardOutlined style={{ color: "#722ed1" }} />,
+                        onClick: () => {
+                          if (!appId) {
+                            message.warning("请先选择应用");
+                            return;
+                          }
+                          navigate(`/datav/designer?appId=${appId}`);
+                        },
                       },
-                    },
-                    {
-                      key: "report-datav",
-                      label: "数据大屏预览",
-                      icon: <DashboardOutlined style={{ color: "#722ed1" }} />,
-                      onClick: () => {
-                        if (!appId) {
-                          message.warning("请先选择应用");
-                          return;
-                        }
-                        navigate(`/app/${appId}/datav`);
+                      {
+                        key: "report-datav",
+                        label: "数据大屏预览",
+                        icon: <DashboardOutlined style={{ color: "#722ed1" }} />,
+                        onClick: () => {
+                          if (!appId) {
+                            message.warning("请先选择应用");
+                            return;
+                          }
+                          navigate(`/app/${appId}/datav`);
+                        },
                       },
-                    },
-                    {
-                      key: "group",
-                      label: "分组",
-                      icon: <ApartmentOutlined style={{ color: "#faad14" }} />,
-                      onClick: () => {
-                        const newGroupId = `group_${Date.now()}`;
-                        const defaultName = "未命名的分组";
-                        let newGroups: typeof groups;
-                        setGroups((prev) => {
-                          newGroups = [...prev, { id: newGroupId, name: defaultName, formIds: [] }];
-                          return newGroups;
-                        });
-                        setExpandedGroups((prev) => new Set([...prev, newGroupId]));
-                        setEditingGroupId(newGroupId);
-                        setEditingGroupName(defaultName);
-                        // 保存到后端
-                        setTimeout(() => {
-                          saveGroupsToMetadata(newGroups!, ungroupOrder);
-                        }, 0);
+                      {
+                        key: "group",
+                        label: "分组",
+                        icon: <ApartmentOutlined style={{ color: "#faad14" }} />,
+                        onClick: () => {
+                          const newGroupId = `group_${Date.now()}`;
+                          const defaultName = "未命名的分组";
+                          let newGroups: typeof groups;
+                          setGroups((prev) => {
+                            newGroups = [...prev, { id: newGroupId, name: defaultName, formIds: [] }];
+                            return newGroups;
+                          });
+                          setExpandedGroups((prev) => new Set([...prev, newGroupId]));
+                          setEditingGroupId(newGroupId);
+                          setEditingGroupName(defaultName);
+                          setTimeout(() => {
+                            saveGroupsToMetadata(newGroups!, ungroupOrder);
+                          }, 0);
+                        },
                       },
-                    },
-                  ],
-                }}
-                trigger={["click"]}
-                placement="bottomRight"
-              >
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                  size="small"
-                  style={{ borderRadius: "50%", width: 24, height: 24, padding: 0 }}
-                />
-              </Dropdown>
-            }
-          />
+                    ],
+                  }}
+                  trigger={["click"]}
+                  placement="bottomRight"
+                >
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    size="small"
+                    style={{ borderRadius: "50%", width: 24, height: 24, padding: 0 }}
+                  />
+                </Dropdown>
+              }
+            />
           </div>
-
-        <div style={{ padding: "0 16px 16px" }}>
-          <ul className={styles.menuContainer}>
+          <div style={{ padding: "0 16px 16px" }}>
+            <ul className={styles.menuContainer}>
             {groups.map((group) => {
               const groupForms =
                 group.formIds
@@ -1753,14 +1610,11 @@ export const RuntimeListPage = () => {
                     className={`${styles.nodeItem} ${styles.groupItem}`}
                     onClick={() => {
                       const next = new Set(expandedGroups);
-                      if (next.has(group.id)) {
-                        next.delete(group.id);
-                      } else {
-                        next.add(group.id);
-                      }
+                      if (next.has(group.id)) next.delete(group.id);
+                      else next.add(group.id);
                       setExpandedGroups(next);
                     }}
-                  >
+                >
                     <HolderOutlined
                       className={styles.dragIcon}
                       draggable
@@ -1841,7 +1695,17 @@ export const RuntimeListPage = () => {
           </div>
                   <ul className={styles.subMenu} style={{ display: isExpanded ? "block" : "none" }}>
                     {groupForms.length ? (
-                      groupForms.map((form) => renderFormMenuItem(form, group.id))
+                      groupForms.map((form) => {
+                        const node = renderFormMenuItem(form, group.id);
+                        return React.isValidElement(node)
+                          ? React.cloneElement(node as any, {
+                              onClick: (...args: any[]) => {
+                                (node as any).props?.onClick?.(...args);
+                                setMobileMenuOpen(false);
+                              },
+                            })
+                          : node;
+                      })
                     ) : (
                       <li style={{ padding: "8px 12px", color: "#999", fontSize: 12 }}>
                         暂无表单，拖动表单到此处
@@ -1881,7 +1745,17 @@ export const RuntimeListPage = () => {
                   </span>
                 </div>
                 <ul className={styles.subMenu} style={{ display: expandedGroups.has("ungroup") ? "block" : "none" }}>
-                  {ungroupForms.map((form) => renderFormMenuItem(form))}
+                  {ungroupForms.map((form) => {
+                    const node = renderFormMenuItem(form);
+                    return React.isValidElement(node)
+                      ? React.cloneElement(node as any, {
+                          onClick: (...args: any[]) => {
+                            (node as any).props?.onClick?.(...args);
+                            setMobileMenuOpen(false);
+                          },
+                        })
+                      : node;
+                  })}
                 </ul>
               </li>
             )}
@@ -1981,46 +1855,441 @@ export const RuntimeListPage = () => {
                 </div>
               </li>
             )}
-          </ul>
-        </div>
+            </ul>
+          </div>
 
-        {/* 应用配置 */}
-        <div style={{ 
-          position: "absolute", 
-          bottom: 0, 
-          left: 0, 
-          right: 0, 
-          padding: "12px 16px",
-          borderTop: "1px solid #f0f0f0",
-          background: "#fff"
-        }}>
-          <Button
-            type="text"
-            icon={<SettingOutlined />}
-            block
-            onClick={() => navigate(`/app/${appId}/config`)}
-            style={{
-              height: "40px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-start",
-              padding: "0 12px",
-              borderRadius: "6px",
-              transition: "all 0.2s"
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = "#f0f7ff";
-              e.currentTarget.style.color = "#1890ff";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = "transparent";
-              e.currentTarget.style.color = "inherit";
-            }}
-          >
-            应用配置
-          </Button>
-        </div>
-      </Sider>
+          <div style={{ padding: 16, borderTop: "1px solid #f0f0f0" }}>
+            <Button
+              type="text"
+              icon={<SettingOutlined />}
+              block
+              onClick={() => {
+                navigate(`/app/${appId}/config`);
+                setMobileMenuOpen(false);
+              }}
+              style={{ height: 40, display: "flex", alignItems: "center", justifyContent: "flex-start" }}
+            >
+              应用配置
+            </Button>
+          </div>
+        </Drawer>
+      ) : (
+        <Sider 
+          width={280} 
+          style={{ 
+            background: "#fff", 
+            borderRight: "1px solid #f0f0f0",
+            overflow: "auto"
+          }}
+        >
+          {/* 搜索框 */}
+          <div style={{ padding: "16px" }}>
+            <Input
+              placeholder="搜索表单"
+              prefix={<SearchOutlined />}
+              suffix={
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: "form",
+                        label: "表单",
+                        icon: <FileTextOutlined style={{ color: "#52c41a" }} />,
+                        onClick: () => {
+                          setNewFormModalOpen(true);
+                        },
+                      },
+                      {
+                        key: "developer",
+                        label: "开发者页面",
+                        icon: <ThunderboltOutlined style={{ color: "#722ed1" }} />,
+                        onClick: () => {
+                          if (!appId) {
+                            message.warning("请先选择应用");
+                            return;
+                          }
+                          navigate(`/app/${appId}/developer`);
+                        },
+                      },
+                      {
+                        key: "report",
+                        label: "报表",
+                        icon: <BarChartOutlined style={{ color: "#1890ff" }} />,
+                        onClick: () => {
+                          // 跳转到报表设计器，带上应用ID
+                          navigate(`/reports/designer?appId=${appId ?? ""}`);
+                        },
+                      },
+                      {
+                        key: "datav",
+                        label: "数据大屏",
+                        icon: <DashboardOutlined style={{ color: "#722ed1" }} />,
+                        onClick: () => {
+                          if (!appId) {
+                            message.warning("请先选择应用");
+                            return;
+                          }
+                          // 点击加号 → 数据大屏，始终是新建，不带 screenId
+                          navigate(`/datav/designer?appId=${appId}`);
+                        },
+                      },
+                      {
+                        key: "report-datav",
+                        label: "数据大屏预览",
+                        icon: <DashboardOutlined style={{ color: "#722ed1" }} />,
+                        onClick: () => {
+                          if (!appId) {
+                            message.warning("请先选择应用");
+                            return;
+                          }
+                          navigate(`/app/${appId}/datav`);
+                        },
+                      },
+                      {
+                        key: "group",
+                        label: "分组",
+                        icon: <ApartmentOutlined style={{ color: "#faad14" }} />,
+                        onClick: () => {
+                          const newGroupId = `group_${Date.now()}`;
+                          const defaultName = "未命名的分组";
+                          let newGroups: typeof groups;
+                          setGroups((prev) => {
+                            newGroups = [...prev, { id: newGroupId, name: defaultName, formIds: [] }];
+                            return newGroups;
+                          });
+                          setExpandedGroups((prev) => new Set([...prev, newGroupId]));
+                          setEditingGroupId(newGroupId);
+                          setEditingGroupName(defaultName);
+                          // 保存到后端
+                          setTimeout(() => {
+                            saveGroupsToMetadata(newGroups!, ungroupOrder);
+                          }, 0);
+                        },
+                      },
+                    ],
+                  }}
+                  trigger={["click"]}
+                  placement="bottomRight"
+                >
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                    size="small"
+                    style={{ borderRadius: "50%", width: 24, height: 24, padding: 0 }}
+                  />
+                </Dropdown>
+              }
+            />
+            </div>
+
+          <div style={{ padding: "0 16px 16px" }}>
+            <ul className={styles.menuContainer}>
+              {groups.map((group) => {
+                const groupForms =
+                  group.formIds
+                    .map((id) => formMap.get(id))
+                    .filter((form): form is FormDefinitionResponse => !!form);
+                const isExpanded = expandedGroups.has(group.id);
+                return (
+                  <li
+                    key={group.id}
+                    className={`${styles.menuItem} ${styles.hasGroup}`}
+                    data-draggable="true"
+                    onDragOver={(e) => {
+                      if (draggingGroupId && draggingGroupId !== group.id) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        return;
+                      }
+                      if (draggingFormId) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }
+                    }}
+                    onDrop={(e) => {
+                      if (draggingGroupId && draggingGroupId !== group.id) {
+                        e.preventDefault();
+                        handleGroupReorder(group.id);
+                        return;
+                      }
+                      if (!draggingFormId) return;
+                      e.preventDefault();
+                      handleMoveFormToGroup(draggingFormId, group.id);
+                    }}
+                  >
+                    <div
+                      className={`${styles.nodeItem} ${styles.groupItem}`}
+                      onClick={() => {
+                        const next = new Set(expandedGroups);
+                        if (next.has(group.id)) {
+                          next.delete(group.id);
+                        } else {
+                          next.add(group.id);
+                        }
+                        setExpandedGroups(next);
+                      }}
+                    >
+                      <HolderOutlined
+                        className={styles.dragIcon}
+                        draggable
+                        onDragStart={(e) => {
+                          e.stopPropagation();
+                          setDraggingGroupId(group.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.dropEffect = "move";
+                          e.dataTransfer.setData("text/plain", group.id);
+                        }}
+                        onDragEnd={() => setDraggingGroupId(undefined)}
+                      />
+                      {isExpanded ? (
+                        <CaretDownOutlined className={styles.groupNodeIcon} />
+                      ) : (
+                        <CaretRightOutlined className={styles.groupNodeIcon} />
+                      )}
+                      {editingGroupId === group.id ? (
+                        <Input
+                          size="small"
+                          autoFocus
+                          value={editingGroupName}
+                          onChange={(e) => setEditingGroupName(e.target.value)}
+                          onPressEnter={(e) => {
+                            e.stopPropagation();
+                            commitGroupName(group.id, editingGroupName);
+                          }}
+                          onBlur={(e) => {
+                            e.stopPropagation();
+                            if (editingGroupName.trim()) {
+                              commitGroupName(group.id, editingGroupName);
+                            } else {
+                              setEditingGroupId(undefined);
+                              setEditingGroupName("");
+                            }
+                          }}
+                          style={{ flex: 1, marginRight: 8 }}
+                        />
+                      ) : (
+                        <span className={`${styles.nodeName} ${styles.groupName}`}>
+                          {group.name} <span className={styles.childrenNum}>({groupForms.length})</span>
+                        </span>
+                      )}
+                      <Dropdown
+                        menu={{
+                          items: [
+                            {
+                              key: "edit",
+                              label: "编辑",
+                              icon: <EditOutlined />,
+                              onClick: () => {
+                                setEditingGroupId(group.id);
+                                setEditingGroupName(group.name);
+                              },
+                            },
+                            {
+                              key: "delete",
+                              label: "删除",
+                              danger: true,
+                              onClick: async () => {
+                                try {
+                                  const newGroups = groups.filter((g) => g.id !== group.id);
+                                  setGroups(newGroups);
+                                  await saveGroupsToMetadata(newGroups, ungroupOrder);
+                                  message.success("删除成功");
+                                } catch (error) {
+                                  message.error("删除失败");
+                                }
+                              },
+                            },
+                          ],
+                        }}
+                        trigger={["click"]}
+                        placement="bottomRight"
+                      >
+                        <EllipsisOutlined className={styles.settingIcon} />
+                      </Dropdown>
+            </div>
+                    <ul className={styles.subMenu} style={{ display: isExpanded ? "block" : "none" }}>
+                      {groupForms.length ? (
+                        groupForms.map((form) => renderFormMenuItem(form, group.id))
+                      ) : (
+                        <li style={{ padding: "8px 12px", color: "#999", fontSize: 12 }}>
+                          暂无表单，拖动表单到此处
+                        </li>
+                      )}
+                    </ul>
+                  </li>
+                );
+              })}
+
+              {/* 未分组的表单列表 */}
+              {ungroupForms.length > 0 && (
+                <li className={styles.menuItem}>
+                  <div
+                    className={`${styles.nodeItem} ${styles.groupItem}`}
+                    onClick={() => {
+                      const next = new Set(expandedGroups);
+                      if (next.has("ungroup")) {
+                        next.delete("ungroup");
+                      } else {
+                        next.add("ungroup");
+                      }
+                      setExpandedGroups(next);
+                    }}
+                  >
+                    <HolderOutlined
+                      className={styles.dragIcon}
+                      style={{ pointerEvents: 'none', cursor: 'default' }}
+                    />
+                    {expandedGroups.has("ungroup") ? (
+                      <CaretDownOutlined className={styles.groupNodeIcon} />
+                    ) : (
+                      <CaretRightOutlined className={styles.groupNodeIcon} />
+                    )}
+                    <span className={`${styles.nodeName} ${styles.groupName}`}>
+                      未分组 <span className={styles.childrenNum}>({ungroupForms.length})</span>
+                    </span>
+                  </div>
+                  <ul className={styles.subMenu} style={{ display: expandedGroups.has("ungroup") ? "block" : "none" }}>
+                    {ungroupForms.map((form) => renderFormMenuItem(form))}
+                  </ul>
+                </li>
+              )}
+
+              {/* 报表列表 - 只在有报表时显示 */}
+              {reports.length > 0 && (
+                <li className={styles.menuItem}>
+                  <div
+                    className={`${styles.nodeItem} ${styles.groupItem}`}
+                    onClick={() => {
+                      const next = new Set(expandedGroups);
+                      if (next.has("reports")) {
+                        next.delete("reports");
+                      } else {
+                        next.add("reports");
+                      }
+                      setExpandedGroups(next);
+                    }}
+                  >
+                    <HolderOutlined
+                      className={styles.dragIcon}
+                      style={{ pointerEvents: 'none', cursor: 'default' }}
+                    />
+                    {expandedGroups.has("reports") ? (
+                      <CaretDownOutlined className={styles.groupNodeIcon} />
+                    ) : (
+                      <CaretRightOutlined className={styles.groupNodeIcon} />
+                    )}
+                    <span className={`${styles.nodeName} ${styles.groupName}`}>
+                      报表 <span className={styles.childrenNum}>({reports.length})</span>
+                    </span>
+                  </div>
+                  <ul 
+                    className={styles.subMenu} 
+                    style={{ display: expandedGroups.has("reports") ? "block" : "none" }}
+                  >
+                    {reports.map((report) => renderReportMenuItem(report))}
+                  </ul>
+                </li>
+              )}
+
+              {/* 数据大屏列表 - 只在有数据大屏时显示 */}
+              {datavScreens.length > 0 && (
+                <li className={styles.menuItem}>
+                  <div
+                    className={`${styles.nodeItem} ${styles.groupItem}`}
+                    onClick={() => {
+                      const next = new Set(expandedGroups);
+                      if (next.has("datavScreens")) {
+                        next.delete("datavScreens");
+                      } else {
+                        next.add("datavScreens");
+                      }
+                      setExpandedGroups(next);
+                    }}
+                  >
+                    <HolderOutlined
+                      className={styles.dragIcon}
+                      style={{ pointerEvents: 'none', cursor: 'default' }}
+                    />
+                    {expandedGroups.has("datavScreens") ? (
+                      <CaretDownOutlined className={styles.groupNodeIcon} />
+                    ) : (
+                      <CaretRightOutlined className={styles.groupNodeIcon} />
+                    )}
+                    <span className={`${styles.nodeName} ${styles.groupName}`}>
+                      数据大屏 <span className={styles.childrenNum}>({datavScreens.length})</span>
+                    </span>
+                  </div>
+                  <ul 
+                    className={styles.subMenu} 
+                    style={{ display: expandedGroups.has("datavScreens") ? "block" : "none" }}
+                  >
+                    {datavScreens.map((screen) => renderDatavScreenMenuItem(screen))}
+                  </ul>
+                </li>
+              )}
+
+              {/* 拖拽区域 - 只在有分组时显示 */}
+              {groups.length > 0 && (
+                <li className={styles.menuItem}>
+                  <div
+                    className={styles.dropZone}
+                    onDragOver={(e) => {
+                      if (draggingGroupId) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }
+                    }}
+                    onDrop={(e) => {
+                      if (!draggingGroupId) return;
+                      e.preventDefault();
+                      handleGroupDropAtEnd();
+                    }}
+                  >
+                    可将分组拖拽到此追加
+                  </div>
+                </li>
+              )}
+            </ul>
+          </div>
+
+          {/* 应用配置 */}
+          <div style={{ 
+            position: "absolute", 
+            bottom: 0, 
+            left: 0, 
+            right: 0, 
+            padding: "12px 16px",
+            borderTop: "1px solid #f0f0f0",
+            background: "#fff"
+          }}>
+            <Button
+              type="text"
+              icon={<SettingOutlined />}
+              block
+              onClick={() => navigate(`/app/${appId}/config`)}
+              style={{
+                height: "40px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-start",
+                padding: "0 12px",
+                borderRadius: "6px",
+                transition: "all 0.2s"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "#f0f7ff";
+                e.currentTarget.style.color = "#1890ff";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.color = "inherit";
+              }}
+            >
+              应用配置
+            </Button>
+          </div>
+        </Sider>
+      )}
 
       {/* 右侧内容区 - 数据列表 */}
       <Content 

@@ -14,6 +14,7 @@ import {
 } from "@ant-design/icons";
 import { authApi } from "@/api/auth";
 import { dingtalkLoginApi } from "@/api/dingtalk-login";
+import { wecomLoginApi } from "@/api/wecom-login";
 import { useAuthStore } from "@/store/useAuthStore";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import "./LoginPage.css";
@@ -95,6 +96,25 @@ export const LoginPage = () => {
       window.location.href = url;
     } catch (e: any) {
       message.error(e?.response?.data?.message || e?.message || "钉钉扫码登录失败");
+    } finally {
+      setDingLoading(false);
+    }
+  };
+
+  const onWecomScanLogin = async () => {
+    try {
+      setDingLoading(true);
+      const resp = await wecomLoginApi.getWebUrl({
+        redirectUri: `${window.location.origin}/api/wecom/login/callback`,
+      });
+      const url = resp?.data?.url;
+      if (!url) {
+        message.error("获取企业微信登录地址失败");
+        return;
+      }
+      window.location.href = url;
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || e?.message || "企业微信扫码登录失败");
     } finally {
       setDingLoading(false);
     }
@@ -241,6 +261,11 @@ export const LoginPage = () => {
                     disabled={loading}
                   >
                     钉钉扫码登录
+                  </Button>
+                </Form.Item>
+                <Form.Item>
+                  <Button block onClick={onWecomScanLogin} loading={dingLoading} disabled={loading}>
+                    企业微信扫码登录
                   </Button>
                 </Form.Item>
                 <div className="forgot-password">

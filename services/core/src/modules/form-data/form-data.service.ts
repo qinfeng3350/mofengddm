@@ -3,6 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FormDataEntity } from '../../database/entities/form-data.entity';
 import { FormDefinitionEntity } from '../../database/entities/form-definition.entity';
+import { UserRoleEntity } from '../../database/entities/user-role.entity';
+import { RoleEntity } from '../../database/entities/role.entity';
+import { WorkflowInstanceEntity } from '../../database/entities/workflow-instance.entity';
 import { SubmitFormDataDto } from './dto/submit-form-data.dto';
 import { BusinessRuleExecutorService } from '../business-rule/business-rule.executor';
 import { OperationLogService } from '../operation-log/operation-log.service';
@@ -15,11 +18,198 @@ export class FormDataService {
     private formDataRepository: Repository<FormDataEntity>,
     @InjectRepository(FormDefinitionEntity)
     private formDefinitionRepository: Repository<FormDefinitionEntity>,
+    @InjectRepository(UserRoleEntity)
+    private userRoleRepository: Repository<UserRoleEntity>,
+    @InjectRepository(WorkflowInstanceEntity)
+    private workflowInstanceRepository: Repository<WorkflowInstanceEntity>,
     @Inject(forwardRef(() => BusinessRuleExecutorService))
     private ruleExecutor: BusinessRuleExecutorService,
     private operationLogService: OperationLogService,
     private readonly tenantLimitsService: TenantLimitsService,
   ) {}
+
+  private parseConfig(raw: any): any {
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+    return raw;
+  }
+
+  private async findOneRaw(recordId: string): Promise<FormDataEntity> {
+    const formData = await this.formDataRepository.findOne({
+      where: { recordId },
+    });
+    if (!formData) {
+      throw new NotFoundException(`表单数据 ${recordId} 不存在`);
+    }
+    return formData;
+  }
+
+  private async getUserRoleIds(params: { userId?: string; tenantId: string }): Promise<string[]> {
+    const userId = params.userId ? String(params.userId) : '';
+    if (!userId) return [];
+    // user_roles 没有 tenantId，tenant 归属在 roles 表
+    const rows = await this.userRoleRepository
+      .createQueryBuilder('ur')
+      .leftJoin(RoleEntity, 'r', 'r.id = ur.roleId')
+      .where('ur.userId = :userId', { userId })
+      .andWhere('r.tenantId = :tenantId', { tenantId: String(params.tenantId) })
+      .select(['ur.roleId as roleId'])
+      .getRawMany();
+    return rows.map((x: any) => String(x.roleId)).filter(Boolean);
+  }
+
+  private computeAction(params: {
+    fieldPermissions?: any;
+    nodeId?: string;
+    roleIds: string[];
+    key: string;
+  }): 'hidden' | 'readonly' | 'editable' {
+    const fp = params.fieldPermissions;
+    const fallback = fp?.defaults?.fallback || 'editable';
+
+    const nodeRule =
+      params.nodeId && fp?.nodeRules && fp.nodeRules[String(params.nodeId)]
+        ? fp.nodeRules[String(params.nodeId)][params.key]
+        : undefined;
+
+    if (nodeRule) return nodeRule;
+
+    const roleRules = fp?.roleRules || {};
+    const hits: string[] = [];
+    for (const rid of params.roleIds || []) {
+      const a = roleRules?.[String(rid)]?.[params.key];
+      if (a) hits.push(a);
+    }
+    if (hits.includes('hidden')) return 'hidden';
+    if (hits.includes('readonly')) return 'readonly';
+    if (hits.includes('editable')) return 'editable';
+    return fallback;
+  }
+
+  private applyReadFilter(params: {
+    data: Record<string, any>;
+    fieldPermissions?: any;
+    nodeId?: string;
+    roleIds: string[];
+  }): Record<string, any> {
+    const next: Record<string, any> = { ...(params.data || {}) };
+    const fp = params.fieldPermissions;
+    if (!fp || typeof fp !== 'object') return next;
+
+    // 过滤主表字段（key 不含点）
+    for (const key of Object.keys(next)) {
+      if (key.includes('.')) continue;
+      const action = this.computeAction({
+        fieldPermissions: fp,
+        nodeId: params.nodeId,
+        roleIds: params.roleIds,
+        key,
+      });
+      if (action === 'hidden') {
+        delete next[key];
+      }
+    }
+
+    // 过滤子表列（key = subId.colId）
+    const nodeRules = (params.nodeId && fp?.nodeRules?.[String(params.nodeId)]) || {};
+    const roleRules = fp?.roleRules || {};
+    const allRuleKeys = new Set<string>();
+    Object.keys(nodeRules || {}).forEach((k) => allRuleKeys.add(k));
+    for (const rid of params.roleIds || []) {
+      Object.keys(roleRules?.[String(rid)] || {}).forEach((k) => allRuleKeys.add(k));
+    }
+
+    for (const ruleKey of Array.from(allRuleKeys)) {
+      if (!ruleKey.includes('.')) continue;
+      const [subId, colId] = ruleKey.split('.');
+      if (!subId || !colId) continue;
+      const action = this.computeAction({
+        fieldPermissions: fp,
+        nodeId: params.nodeId,
+        roleIds: params.roleIds,
+        key: ruleKey,
+      });
+      if (action !== 'hidden') continue;
+      const arr = next[subId];
+      if (Array.isArray(arr)) {
+        next[subId] = arr.map((row: any) => {
+          if (!row || typeof row !== 'object') return row;
+          const r = { ...row };
+          delete r[colId];
+          return r;
+        });
+      }
+    }
+    return next;
+  }
+
+  private applyWriteFilter(params: {
+    incoming: Record<string, any>;
+    fieldPermissions?: any;
+    nodeId?: string;
+    roleIds: string[];
+  }): { cleaned: Record<string, any>; ignoredFields: string[] } {
+    const cleaned: Record<string, any> = { ...(params.incoming || {}) };
+    const ignoredFields: string[] = [];
+    const fp = params.fieldPermissions;
+    if (!fp || typeof fp !== 'object') return { cleaned, ignoredFields };
+
+    // 主表字段
+    for (const key of Object.keys(cleaned)) {
+      if (key.includes('.')) continue;
+      const action = this.computeAction({
+        fieldPermissions: fp,
+        nodeId: params.nodeId,
+        roleIds: params.roleIds,
+        key,
+      });
+      if (action !== 'editable') {
+        ignoredFields.push(key);
+        delete cleaned[key];
+      }
+    }
+
+    // 子表列
+    const nodeRules = (params.nodeId && fp?.nodeRules?.[String(params.nodeId)]) || {};
+    const roleRules = fp?.roleRules || {};
+    const allRuleKeys = new Set<string>();
+    Object.keys(nodeRules || {}).forEach((k) => allRuleKeys.add(k));
+    for (const rid of params.roleIds || []) {
+      Object.keys(roleRules?.[String(rid)] || {}).forEach((k) => allRuleKeys.add(k));
+    }
+    for (const ruleKey of Array.from(allRuleKeys)) {
+      if (!ruleKey.includes('.')) continue;
+      const [subId, colId] = ruleKey.split('.');
+      if (!subId || !colId) continue;
+      const action = this.computeAction({
+        fieldPermissions: fp,
+        nodeId: params.nodeId,
+        roleIds: params.roleIds,
+        key: ruleKey,
+      });
+      if (action !== 'editable') {
+        const arr = cleaned[subId];
+        if (Array.isArray(arr)) {
+          cleaned[subId] = arr.map((row: any) => {
+            if (!row || typeof row !== 'object') return row;
+            const r = { ...row };
+            if (colId in r) {
+              ignoredFields.push(ruleKey);
+              delete r[colId];
+            }
+            return r;
+          });
+        }
+      }
+    }
+    return { cleaned, ignoredFields };
+  }
 
   async submit(
     submitDto: SubmitFormDataDto,
@@ -36,6 +226,9 @@ export class FormDataService {
     }
 
     const tenantId = formDefinition.tenantId;
+    const config = this.parseConfig(formDefinition.config);
+    const fieldPermissions = config?.metadata?.fieldPermissions;
+    const roleIds = await this.getUserRoleIds({ userId, tenantId: String(tenantId) });
 
     // 如果提供了 recordId，说明是编辑模式，调用 update 方法
     if (submitDto.recordId) {
@@ -50,7 +243,17 @@ export class FormDataService {
       formId: submitDto.formId,
       tenantId,
       recordId: `record_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      data: submitDto.data, // TypeORM会自动处理JSON序列化
+      data: (() => {
+        // 新增默认节点视为 start（发起）
+        const { cleaned, ignoredFields } = this.applyWriteFilter({
+          incoming: submitDto.data,
+          fieldPermissions,
+          nodeId: 'start',
+          roleIds,
+        });
+        (submitDto as any).__ignoredFields = ignoredFields;
+        return cleaned;
+      })(), // TypeORM会自动处理JSON序列化
       submitterId: userId,
       submitterName: userName,
       status: submitDto.status || 'submitted',
@@ -88,7 +291,8 @@ export class FormDataService {
       console.error('业务规则执行失败:', error);
     }
 
-    return saved;
+    const ignoredFields = (submitDto as any).__ignoredFields || [];
+    return Object.assign(saved as any, { ignoredFields });
   }
 
   async update(
@@ -97,12 +301,31 @@ export class FormDataService {
     userId: string,
     userName?: string,
   ): Promise<FormDataEntity> {
-    const existingRecord = await this.findOne(recordId);
+    const existingRecord = await this.findOneRaw(recordId);
     const tenantId = existingRecord.tenantId;
     const oldData = { ...existingRecord.data };
 
+    // 读取表单定义字段权限与当前节点
+    const formDefinition = await this.formDefinitionRepository.findOne({
+      where: { formId: existingRecord.formId },
+    });
+    const config = this.parseConfig(formDefinition?.config);
+    const fieldPermissions = config?.metadata?.fieldPermissions;
+    const roleIds = await this.getUserRoleIds({ userId, tenantId: String(tenantId) });
+    const inst = await this.workflowInstanceRepository.findOne({
+      where: { recordId, tenantId: String(tenantId) } as any,
+    });
+    const nodeId = inst?.currentNodeId || 'start';
+
     // 更新数据
-    const updatedData = updateDto.data || existingRecord.data;
+    const incoming = updateDto.data || existingRecord.data;
+    const { cleaned, ignoredFields } = this.applyWriteFilter({
+      incoming,
+      fieldPermissions,
+      nodeId,
+      roleIds,
+    });
+    const updatedData = cleaned;
     Object.assign(existingRecord, {
       data: updatedData,
       submitterId: userId,
@@ -113,10 +336,6 @@ export class FormDataService {
     const saved = await this.formDataRepository.save(existingRecord);
 
     // 计算字段变更
-    const formDefinition = await this.formDefinitionRepository.findOne({
-      where: { formId: existingRecord.formId },
-    });
-
     const fieldChanges: Array<{
       fieldId: string;
       fieldLabel?: string;
@@ -181,31 +400,60 @@ export class FormDataService {
       console.error('业务规则执行失败:', error);
     }
 
-    return saved;
+    return Object.assign(saved as any, { ignoredFields });
   }
 
-  async findAll(formId: string): Promise<FormDataEntity[]> {
+  async findAll(formId: string, actor?: { userId?: string }): Promise<FormDataEntity[]> {
     const fd = await this.formDefinitionRepository.findOne({ where: { formId } });
     if (!fd) {
       throw new NotFoundException(`表单定义 ${formId} 不存在`);
     }
-    return await this.formDataRepository.find({
+    const list = await this.formDataRepository.find({
       where: { formId, tenantId: fd.tenantId },
       order: { createdAt: 'DESC' },
     });
+    const config = this.parseConfig(fd.config);
+    const fieldPermissions = config?.metadata?.fieldPermissions;
+    const roleIds = await this.getUserRoleIds({
+      userId: actor?.userId,
+      tenantId: String(fd.tenantId),
+    });
+    // 列表页通常不带节点上下文：按角色规则过滤即可（节点可在详情页再精确控制）
+    return list.map((r) => {
+      const filtered = this.applyReadFilter({
+        data: r.data as any,
+        fieldPermissions,
+        nodeId: undefined,
+        roleIds,
+      });
+      return Object.assign(r as any, { data: filtered });
+    });
   }
 
-  async findOne(recordId: string): Promise<FormDataEntity> {
-    const formData = await this.formDataRepository.findOne({
-      where: { recordId },
+  async findOne(recordId: string, actor?: { userId?: string }): Promise<FormDataEntity> {
+    const formData = await this.findOneRaw(recordId);
+
+    // 字段权限过滤（按当前流程节点 + 角色）
+    const formDefinition = await this.formDefinitionRepository.findOne({
+      where: { formId: formData.formId },
     });
-
-    if (!formData) {
-      throw new NotFoundException(`表单数据 ${recordId} 不存在`);
-    }
-
-    // TypeORM的json类型会自动反序列化，直接返回即可
-    return formData;
+    const config = this.parseConfig(formDefinition?.config);
+    const fieldPermissions = config?.metadata?.fieldPermissions;
+    const roleIds = await this.getUserRoleIds({
+      userId: actor?.userId,
+      tenantId: String(formData.tenantId),
+    });
+    const inst = await this.workflowInstanceRepository.findOne({
+      where: { recordId, tenantId: String(formData.tenantId) } as any,
+    });
+    const nodeId = inst?.currentNodeId || 'start';
+    const filtered = this.applyReadFilter({
+      data: formData.data as any,
+      fieldPermissions,
+      nodeId,
+      roleIds,
+    });
+    return Object.assign(formData as any, { data: filtered });
   }
 
   async remove(recordId: string, userId?: string, userName?: string): Promise<void> {

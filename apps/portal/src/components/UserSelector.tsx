@@ -11,6 +11,7 @@ interface User {
   id: string;
   name: string;
   account: string;
+  avatar?: string;
   email?: string;
   phone?: string;
 }
@@ -113,7 +114,7 @@ export const UserSelector = ({
         {selectedUsers.length > 0 ? (
           selectedUsers.map(user => (
             <Space key={user.id} style={{ background: "#f0f0f0", padding: "2px 8px", borderRadius: 4 }}>
-              <Avatar size="small" icon={<UserOutlined />} />
+              <Avatar size="small" src={(user as any).avatar} icon={<UserOutlined />} />
               <Text>{user.name}</Text>
               {!disabled && (
                 <Button
@@ -165,7 +166,7 @@ export const UserSelector = ({
                 onClick={() => handleSelect(user)}
               >
                 <List.Item.Meta
-                  avatar={<Avatar icon={<UserOutlined />} />}
+                  avatar={<Avatar src={(user as any).avatar} icon={<UserOutlined />} />}
                   title={user.name}
                   description={
                     <Space>

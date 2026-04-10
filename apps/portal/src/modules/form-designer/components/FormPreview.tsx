@@ -27,7 +27,7 @@ export const FormPreview = ({ formSchema }: FormPreviewProps) => {
   const formValues = watch();
 
   const onSubmit = (data: Record<string, unknown>) => {
-    console.log("表单数据:", data);
+    // 预览表单提交：不打印控制台，避免干扰调试
   };
 
   // 获取所有元素（字段和容器）
