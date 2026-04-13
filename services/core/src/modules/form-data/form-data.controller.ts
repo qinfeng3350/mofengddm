@@ -27,6 +27,18 @@ export class FormDataController {
     return this.formDataService.findAll(formId, { userId });
   }
 
+  @Get('form/:formId/paged')
+  @UseGuards(JwtAuthGuard)
+  async findPagedByForm(
+    @Param('formId') formId: string,
+    @Req() req: any,
+  ) {
+    const { userId } = this.actor(req);
+    const page = req.query?.page ? parseInt(String(req.query.page), 10) : 1;
+    const pageSize = req.query?.pageSize ? parseInt(String(req.query.pageSize), 10) : 20;
+    return this.formDataService.findPaged(formId, { page, pageSize }, { userId });
+  }
+
   @Get(':recordId')
   @UseGuards(JwtAuthGuard)
   async findOne(@Param('recordId') recordId: string, @Req() req: any) {

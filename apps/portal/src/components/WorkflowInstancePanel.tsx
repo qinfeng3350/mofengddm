@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, Descriptions, Timeline, Tag, Space, Input, Button, message, Popconfirm, Steps, Typography } from "antd";
+import { Card, Descriptions, Timeline, Tag, Space, Input, Button, message, Popconfirm, Steps, Typography, Tabs, Empty } from "antd";
 import dayjs from "dayjs";
 import { workflowApi } from "@/api/workflow";
 import { formDataApi } from "@/api/formData";
 import { apiClient } from "@/api/client";
+import { operationLogApi } from "@/api/operationLog";
 import { CheckOutlined, CloseOutlined, RollbackOutlined, BellOutlined } from "@ant-design/icons";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -61,6 +62,7 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
 
   const pendingTask = (instance?.tasks || []).find((t: any) => t.status === "pending");
   const [comment, setComment] = useState("");
+  const [activeTab, setActiveTab] = useState<"workflow" | "operation">("workflow");
 
   const findNode = (def: any, nodeId?: string) => {
     if (!nodeId || !def?.nodes) return undefined;
@@ -196,12 +198,36 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
     return n ? nodeTypeTitle(n) : nodeId;
   };
 
+  const { data: operationLogs = [], isLoading: operationLoading } = useQuery({
+    queryKey: ["operation-logs", formData?.formId, recordId],
+    queryFn: () => operationLogApi.getLogs(String(formData?.formId || ""), recordId, 200),
+    enabled: !!formData?.formId && !!recordId,
+    staleTime: 30_000,
+  });
+
+  const prettyValue = (v: any) => {
+    if (v === null || v === undefined || v === "") return "空";
+    if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join("，");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  };
+
   return (
-    <Card title="流程明细" loading={isLoading}>
-      {!instance ? (
-        <div style={{ color: "#999" }}>未找到流程实例</div>
-      ) : (
-        <Space direction="vertical" style={{ width: "100%" }}>
+    <Card loading={isLoading}>
+      <Tabs
+        activeKey={activeTab}
+        onChange={(k) => setActiveTab(k as "workflow" | "operation")}
+        items={[
+          { key: "workflow", label: "流程明细" },
+          { key: "operation", label: "操作记录" },
+        ]}
+      />
+
+      {activeTab === "workflow" ? (
+        !instance ? (
+          <div style={{ color: "#999" }}>未找到流程实例</div>
+        ) : (
+          <Space direction="vertical" style={{ width: "100%" }}>
           <Descriptions column={3} bordered size="small">
             <Descriptions.Item label="实例ID">{instance.id}</Descriptions.Item>
             <Descriptions.Item label="状态">
@@ -344,7 +370,65 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
               </Popconfirm>
             </div>
           )}
-        </Space>
+          </Space>
+        )
+      ) : operationLoading ? (
+        <div style={{ textAlign: "center", color: "#999", padding: "24px 0" }}>加载中...</div>
+      ) : operationLogs.length === 0 ? (
+        <Empty description="暂无操作记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ) : (
+        <Timeline style={{ marginTop: 8 }}>
+          {operationLogs.map((log: any, idx: number) => {
+            const fieldChanges =
+              Array.isArray(log?.fieldChanges)
+                ? log.fieldChanges
+                : typeof log?.fieldChanges === "string"
+                  ? (() => {
+                      try {
+                        const parsed = JSON.parse(log.fieldChanges);
+                        return Array.isArray(parsed) ? parsed : [];
+                      } catch {
+                        return [];
+                      }
+                    })()
+                  : [];
+            const sourceText =
+              (log?.operatorName && String(log.operatorName).includes("业务规则")) ||
+              (log?.description && String(log.description).includes("业务规则"))
+                ? "业务规则"
+                : "人工操作";
+            return (
+              <Timeline.Item
+                key={`${log.id || idx}`}
+                color={log.operationType === "delete" ? "red" : log.operationType === "create" ? "green" : "blue"}
+              >
+                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Tag color={sourceText === "业务规则" ? "purple" : "cyan"}>{sourceText}</Tag>
+                    <Tag>{log.operationType === "create" ? "新增" : log.operationType === "delete" ? "删除" : "更新"}</Tag>
+                    <span style={{ color: "#999" }}>
+                      {dayjs(log.createdAt).format("YYYY-MM-DD HH:mm:ss")}
+                    </span>
+                  </Space>
+                  <div>
+                    操作人：{resolveUser(log.operatorId, log.operatorName)}{" "}
+                    {formData?.submitterName ? `（提交人：${formData.submitterName}）` : ""}
+                  </div>
+                  {log.description ? <div style={{ color: "#666" }}>{log.description}</div> : null}
+                  {fieldChanges.length > 0 ? (
+                    <div style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 6, padding: 8 }}>
+                      {fieldChanges.map((c: any, i: number) => (
+                          <div key={`${log.id}-fc-${i}`} style={{ marginBottom: i === log.fieldChanges.length - 1 ? 0 : 6 }}>
+                            <b>{c.fieldLabel || c.fieldId}</b>：{prettyValue(c.oldValue)} {"->"} {prettyValue(c.newValue)}
+                          </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </Space>
+              </Timeline.Item>
+            );
+          })}
+        </Timeline>
       )}
     </Card>
   );

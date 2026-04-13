@@ -43,6 +43,7 @@ import { roleApi } from "@/api/role";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useAuthStore } from "@/store/useAuthStore";
+import { UserAccountDropdown } from "@/components/UserAccountDropdown";
 
 type UserRow = {
   id: string;
@@ -395,21 +396,7 @@ export const ContactsPage = () => {
         </div>
 
         <Space style={{ minWidth: 220, justifyContent: "flex-end" }}>
-          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={["click"]}>
-            <Space style={{ cursor: "pointer" }}>
-              <Avatar
-                src={(currentUserInfo as any)?.avatar || user?.avatar}
-                icon={<UserOutlined />}
-                style={{ backgroundColor: "#1890ff" }}
-                size="small"
-              >
-                {(((currentUserInfo as any)?.name || user?.name || (currentUserInfo as any)?.account || user?.account || "")[0] || "").toUpperCase()}
-              </Avatar>
-              <Typography.Text style={{ fontSize: 13 }}>
-                {(currentUserInfo as any)?.name || user?.name || (currentUserInfo as any)?.account || user?.account || "未登录"}
-              </Typography.Text>
-            </Space>
-          </Dropdown>
+          <UserAccountDropdown showUserName />
         </Space>
       </Layout.Header>
 

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import axios from 'axios';
+import * as https from 'https';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { LoginLogService } from '../login-log/login-log.service';
@@ -32,6 +33,30 @@ export class WecomLoginService {
     @InjectRepository(UserEntity)
     private readonly userRepo: Repository<UserEntity>,
   ) {}
+
+  private readonly http = axios.create({
+    timeout: 15000,
+    httpsAgent: new https.Agent({ keepAlive: true }),
+  });
+
+  private async getWithRetry(url: string, tries: number = 3) {
+    let lastErr: any;
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await this.http.get(url);
+      } catch (err: any) {
+        lastErr = err;
+        const code = err?.code;
+        // 典型网络抖动/重置：重试
+        if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'EAI_AGAIN') {
+          await new Promise((r) => setTimeout(r, 300 * (i + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
+  }
 
   private getWecomConfig(): WecomConfig {
     // 企业微信登录先走环境变量（单独、与钉钉完全分开）
@@ -77,7 +102,7 @@ export class WecomLoginService {
     const url = new URL('https://qyapi.weixin.qq.com/cgi-bin/gettoken');
     url.searchParams.set('corpid', corpId);
     url.searchParams.set('corpsecret', corpSecret);
-    const res = await axios.get(url.toString(), { timeout: 15000 });
+    const res = await this.getWithRetry(url.toString());
     const data = res.data || {};
     if (data.errcode !== 0 || !data.access_token) {
       throw new BadRequestException(`企业微信 gettoken 失败：${data.errmsg || data.errcode}`);
@@ -89,7 +114,7 @@ export class WecomLoginService {
     const url = new URL('https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo');
     url.searchParams.set('access_token', accessToken);
     url.searchParams.set('code', code);
-    const res = await axios.get(url.toString(), { timeout: 15000 });
+    const res = await this.getWithRetry(url.toString());
     const data = res.data || {};
     if (data.errcode !== 0) {
       throw new BadRequestException(
@@ -106,7 +131,7 @@ export class WecomLoginService {
     const url = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/get');
     url.searchParams.set('access_token', accessToken);
     url.searchParams.set('userid', userId);
-    const res = await axios.get(url.toString(), { timeout: 15000 });
+    const res = await this.getWithRetry(url.toString());
     const data = res.data || {};
     if (data.errcode !== 0) {
       throw new BadRequestException(`企业微信 user/get 失败：${data.errmsg || data.errcode}`);

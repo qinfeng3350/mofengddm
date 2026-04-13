@@ -1,28 +1,11 @@
-import { Controller, Get, Query, Request, Inject } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Controller, Get, Query, Request, UseGuards, UnauthorizedException } from '@nestjs/common';
 import { OperationLogService } from './operation-log.service';
-import { TenantEntity } from '../../database/entities/tenant.entity';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('api/operation-logs')
-// TODO: 实现认证 Guard
-// @UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard)
 export class OperationLogController {
-  constructor(
-    private readonly operationLogService: OperationLogService,
-    @InjectRepository(TenantEntity)
-    private tenantRepository: Repository<TenantEntity>,
-  ) {}
-
-  private async getDefaultTenantId(): Promise<string> {
-    const tenant = await this.tenantRepository.findOne({
-      where: { code: 'default' },
-    });
-    if (!tenant) {
-      throw new Error('默认租户不存在，请先初始化数据库');
-    }
-    return tenant.id;
-  }
+  constructor(private readonly operationLogService: OperationLogService) {}
 
   @Get()
   async getLogs(
@@ -31,8 +14,10 @@ export class OperationLogController {
     @Query('recordId') recordId?: string,
     @Query('limit') limit?: string,
   ) {
-    // TODO: 从 JWT token 中获取 tenantId
-    const tenantId = await this.getDefaultTenantId();
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      throw new UnauthorizedException('无法确定租户，请重新登录');
+    }
     
     if (!formId) {
       return [];
@@ -49,7 +34,7 @@ export class OperationLogController {
     }
 
     return await this.operationLogService.getLogsByForm(
-      tenantId,
+      String(tenantId),
       formId,
       parsedLimit,
     );

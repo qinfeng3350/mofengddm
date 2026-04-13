@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Modal, Table, Input, Button, Space, message, Tag, Empty, Pagination } from "antd";
 import { SearchOutlined, CheckOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
@@ -31,6 +31,37 @@ export const RelatedFormSelector = ({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
+
+  const collectSchemaFields = (cfg: any): any[] => {
+    const result = new Map<string, any>();
+    (cfg?.fields || []).forEach((f: any) => {
+      if (f?.fieldId) result.set(String(f.fieldId), f);
+    });
+    (cfg?.elements || []).forEach((el: any) => {
+      if (el && "fieldId" in el && el.fieldId && !result.has(String(el.fieldId))) {
+        result.set(String(el.fieldId), el);
+      }
+      if (el && "children" in el && Array.isArray(el.children)) {
+        el.children.forEach((child: any) => {
+          if (child && "fieldId" in child && child.fieldId && !result.has(String(child.fieldId))) {
+            result.set(String(child.fieldId), child);
+          }
+        });
+      }
+      if (el && "columns" in el && Array.isArray(el.columns)) {
+        el.columns.forEach((col: any) => {
+          if (col?.children && Array.isArray(col.children)) {
+            col.children.forEach((child: any) => {
+              if (child && "fieldId" in child && child.fieldId && !result.has(String(child.fieldId))) {
+                result.set(String(child.fieldId), child);
+              }
+            });
+          }
+        });
+      }
+    });
+    return Array.from(result.values());
+  };
 
   // 获取关联表单的定义
   const { data: relatedFormDefinition, isLoading: formLoading } = useQuery({
@@ -114,30 +145,95 @@ export const RelatedFormSelector = ({
   };
 
   // 关联表单的所有字段（包含容器内字段）
-  const allRelatedFields = (() => {
+  const allRelatedFields = useMemo(() => {
     if (!relatedFormDefinition) return [];
-    const result = new Map<string, any>();
     const cfg: any = relatedFormDefinition.config || {};
-    (cfg.fields || []).forEach((f: any) => {
-      if (f && f.fieldId) {
-        result.set(f.fieldId, f);
-      }
-    });
-    const elements = cfg.elements || [];
-    elements.forEach((el: any) => {
-      if (el && "fieldId" in el && !result.has(el.fieldId)) {
-        result.set(el.fieldId, el);
-      }
-      if (el && "children" in el && Array.isArray(el.children)) {
-        el.children.forEach((child: any) => {
-          if (child && "fieldId" in child && !result.has(child.fieldId)) {
-            result.set(child.fieldId, child);
+    return collectSchemaFields(cfg).filter(
+      (f: any) => f?.type !== "button" && f?.type !== "description",
+    );
+  }, [relatedFormDefinition]);
+
+  // 为“关联字段(record_xxx)”准备显示文本映射
+  const relatedRefFields = useMemo(
+    () =>
+      allRelatedFields
+        .map((f: any) => {
+          // 1) 关联表单字段
+          if ((f?.type === "relatedForm" || f?.type === "relatedFormMulti") && f?.relatedFormId) {
+            return {
+              fieldId: String(f.fieldId),
+              relatedFormId: String(f.relatedFormId),
+              relatedDisplayField: f.relatedDisplayField,
+            };
           }
+          // 2) 选项字段 + 关联其他表单数据（存的是 recordId）
+          if (
+            (f?.type === "select" ||
+              f?.type === "radio" ||
+              f?.type === "checkbox" ||
+              f?.type === "multiselect") &&
+            f?.advanced?.optionsSource === "relatedForm" &&
+            f?.advanced?.optionsRelatedFormId
+          ) {
+            return {
+              fieldId: String(f.fieldId),
+              relatedFormId: String(f.advanced.optionsRelatedFormId),
+              relatedDisplayField: f.advanced.optionsRelatedLabelFieldId,
+            };
+          }
+          return null;
+        })
+        .filter(Boolean) as Array<{ fieldId: string; relatedFormId: string; relatedDisplayField?: string }>,
+    [allRelatedFields],
+  );
+
+  const { data: relatedValueLabelMaps = {} } = useQuery({
+    queryKey: [
+      "related-form-selector-ref-maps",
+      relatedFormId,
+      relatedRefFields.map((f: any) => `${f.fieldId}:${f.relatedFormId}:${f.relatedDisplayField || ""}`).join("|"),
+    ],
+    enabled: open && relatedRefFields.length > 0,
+    queryFn: async () => {
+      const maps: Record<string, Record<string, string>> = {};
+      for (const f of relatedRefFields) {
+        const refFormId = String(f.relatedFormId || "");
+        if (!refFormId) continue;
+        const [def, rows] = await Promise.all([
+          formDefinitionApi.getById(refFormId).catch(() => null),
+          formDataApi.getListByForm(refFormId).catch(() => []),
+        ]);
+        const refFields = collectSchemaFields(def?.config || {});
+        const displayFieldId = String(
+          f.relatedDisplayField || refFields[0]?.fieldId || "",
+        );
+        const labelMap: Record<string, string> = {};
+        (Array.isArray(rows) ? rows : []).forEach((r: any) => {
+          const rid = String(r?.recordId || "");
+          if (!rid) return;
+          const labelRaw = displayFieldId ? r?.data?.[displayFieldId] : undefined;
+          labelMap[rid] =
+            labelRaw == null || String(labelRaw).trim() === ""
+              ? rid
+              : String(labelRaw);
         });
+        maps[String(f.fieldId)] = labelMap;
       }
-    });
-    return Array.from(result.values());
-  })();
+      return maps;
+    },
+  });
+
+  const filteredData = useMemo(() => {
+    const list = formDataList || [];
+    if (!searchText) return list;
+    const kw = searchText.toLowerCase();
+    return list.filter((item) => JSON.stringify(item.data || {}).toLowerCase().includes(kw));
+  }, [formDataList, searchText]);
+
+  const pagedData = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredData.slice(start, start + pageSize);
+  }, [filteredData, page, pageSize]);
 
   // 生成表格列：普通字段直接展示，子表字段展开为子表列（如「客户名称」「联系电话」）
   const columns = (() => {
@@ -178,8 +274,73 @@ export const RelatedFormSelector = ({
           dataIndex: ["data", field.fieldId],
           key: field.fieldId,
           ellipsis: true,
+          width: 160,
           render: (value: any) => {
             if (value === null || value === undefined) return "-";
+
+            const optionRelated =
+              (field.type === "select" ||
+                field.type === "radio" ||
+                field.type === "checkbox" ||
+                field.type === "multiselect") &&
+              field?.advanced?.optionsSource === "relatedForm";
+
+            if (field.type === "relatedForm" || optionRelated) {
+              const key = String(value);
+              const labelMap = relatedValueLabelMaps[String(field.fieldId)] || {};
+              return labelMap[key] || key || "-";
+            }
+            if ((field.type === "relatedFormMulti" || (optionRelated && Array.isArray(value))) && Array.isArray(value)) {
+              const labelMap = relatedValueLabelMaps[String(field.fieldId)] || {};
+              const labels = value.map((v: any) => labelMap[String(v)] || String(v));
+              return labels.length ? labels.join("，") : "-";
+            }
+
+            // 选项字段：显示 label，并在彩色模式下显示颜色
+            if (
+              field.type === "select" ||
+              field.type === "radio" ||
+              field.type === "checkbox" ||
+              field.type === "multiselect"
+            ) {
+              const options = Array.isArray(field.options) ? field.options : [];
+              const labelMap = new Map<string, { label: string; color?: string }>();
+              options.forEach((opt: any) => {
+                const key = String(opt?.value ?? "");
+                if (!key) return;
+                labelMap.set(key, {
+                  label: String(opt?.label ?? key),
+                  color: typeof opt?.color === "string" ? opt.color : undefined,
+                });
+              });
+
+              const colorful = field?.advanced?.colorful === true;
+              const values = Array.isArray(value) ? value : [value];
+              const mapped = values
+                .filter((v) => v !== undefined && v !== null && String(v) !== "")
+                .map((v) => {
+                  const raw = String(v);
+                  const hit = labelMap.get(raw);
+                  return {
+                    label: hit?.label || raw,
+                    color: hit?.color,
+                  };
+                });
+
+              if (!mapped.length) return "-";
+              if (!colorful) {
+                return mapped.map((m) => m.label).join("，");
+              }
+              return (
+                <Space size={4} wrap>
+                  {mapped.map((m, idx) => (
+                    <Tag key={`${m.label}-${idx}`} color={m.color || "processing"} style={{ marginInlineEnd: 0 }}>
+                      {m.label}
+                    </Tag>
+                  ))}
+                </Space>
+              );
+            }
 
             // 数组类字段，显示更友好的提示
             if (Array.isArray(value)) {
@@ -204,8 +365,7 @@ export const RelatedFormSelector = ({
       }
     });
 
-    // 只展示前 5 列，避免列太多撑爆弹窗
-    return cols.slice(0, 5);
+    return cols;
   })();
 
   // 添加操作列
@@ -213,6 +373,7 @@ export const RelatedFormSelector = ({
     title: "操作",
     key: "action",
     width: 100,
+    fixed: "right",
     render: (_: any, record: FormDataResponse) => (
       <Button
         type="link"
@@ -298,18 +459,18 @@ export const RelatedFormSelector = ({
               <Table
                 rowKey="recordId"
                 columns={columns}
-                dataSource={formDataList || []}
+                dataSource={pagedData}
                 rowSelection={rowSelection}
                 pagination={false}
                 size="small"
-                scroll={{ y: 400 }}
+                scroll={{ x: "max-content", y: 400 }}
               />
-              {formDataList && formDataList.length > 0 && (
+              {filteredData && filteredData.length > 0 && (
                 <div style={{ marginTop: 16, textAlign: "right" }}>
                   <Pagination
                     current={page}
                     pageSize={pageSize}
-                    total={formDataList.length}
+                    total={filteredData.length}
                     onChange={(p, size) => {
                       setPage(p);
                       setPageSize(size);

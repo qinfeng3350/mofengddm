@@ -65,6 +65,9 @@ import {
           username: configService.get<string>('database.user'),
           password: configService.get<string>('database.password'),
           database: configService.get<string>('database.name'),
+          // 远程库/网络抖动时，增强自动重连与启动重试
+          retryAttempts: 10,
+          retryDelay: 3000,
           entities: [
             TenantEntity,
             UserEntity,
@@ -89,9 +92,13 @@ import {
           // 优化连接池配置
           extra: {
             connectionLimit: 10,
-            connectTimeout: 10000,
-            acquireTimeout: 10000,
-            timeout: 10000,
+            // mysql2 支持：connectTimeout（连接超时）
+            // 注意：acquireTimeout/timeout 在 mysql2 里会触发“invalid option”警告，后续版本可能直接报错
+            connectTimeout: 20000,
+            enableKeepAlive: true,
+            keepAliveInitialDelay: 0,
+            waitForConnections: true,
+            queueLimit: 0,
           },
           // 禁用自动加载实体（提升启动速度）
           autoLoadEntities: false,

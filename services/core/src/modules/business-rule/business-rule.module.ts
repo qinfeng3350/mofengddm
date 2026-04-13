@@ -7,11 +7,13 @@ import { BusinessRuleController } from './business-rule.controller';
 import { BusinessRuleService } from './business-rule.service';
 import { BusinessRuleExecutorService } from './business-rule.executor';
 import { FormDataModule } from '../form-data/form-data.module';
+import { OperationLogModule } from '../operation-log/operation-log.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([BusinessRuleEntity, FormDataEntity, FormDefinitionEntity]),
     forwardRef(() => FormDataModule),
+    OperationLogModule,
   ],
   controllers: [BusinessRuleController],
   providers: [BusinessRuleService, BusinessRuleExecutorService],

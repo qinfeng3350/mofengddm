@@ -1006,6 +1006,7 @@ const BusinessRuleSettings: React.FC<{
   const [formSelectVisible, setFormSelectVisible] = useState(false);
   const [selectedTargetFormId, setSelectedTargetFormId] = useState<string | null>(null);
   const formSchema = useFormDesignerStore((state) => state.formSchema);
+  const [allFormFieldLabelMap, setAllFormFieldLabelMap] = useState<Record<string, string>>({});
 
   // 获取应用下的表单列表
   const { data: formsList = [], isLoading: formsLoading } = useQuery({
@@ -1013,6 +1014,52 @@ const BusinessRuleSettings: React.FC<{
     queryFn: () => formDefinitionApi.getListByApplication(appId!),
     enabled: !!appId,
   });
+
+  // 预加载应用内所有表单字段标签，供“执行规则”可读化展示
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!formsList || formsList.length === 0) {
+        setAllFormFieldLabelMap({});
+        return;
+      }
+      const map: Record<string, string> = {};
+      (formsList || []).forEach((f: any) => {
+        if (f?.formId) map[String(f.formId)] = String(f.formName || f.formId);
+      });
+      try {
+        const defs = await Promise.all(
+          (formsList || [])
+            .filter((f: any) => !!f?.formId)
+            .map((f: any) =>
+              formDefinitionApi.getById(String(f.formId)).catch(() => null),
+            ),
+        );
+        defs.forEach((d: any) => {
+          const fields = d?.config?.fields || [];
+          fields.forEach((f: any) => {
+            if (f?.fieldId) {
+              map[String(f.fieldId)] = String(f.label || f.fieldId);
+            }
+            if (f?.type === "subtable" && Array.isArray(f.subtableFields)) {
+              f.subtableFields.forEach((sf: any) => {
+                if (sf?.fieldId) {
+                  map[String(sf.fieldId)] = `${f.label || f.fieldId}.${sf.label || sf.fieldId}`;
+                }
+              });
+            }
+          });
+        });
+      } catch {
+        // 忽略可读化加载失败，不影响主流程
+      }
+      if (!cancelled) setAllFormFieldLabelMap(map);
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [formsList]);
 
   // 获取选中的目标表单详情（用于显示字段列表）
   const { data: selectedTargetForm } = useQuery({
@@ -1650,10 +1697,40 @@ const BusinessRuleSettings: React.FC<{
 
   // 格式化执行规则显示
   const formatExecutionRule = (rule: any) => {
+    const humanizeScript = (raw: string) => {
+      if (!raw) return raw;
+      const mapping = new Map<string, string>();
+      Object.entries(allFormFieldLabelMap || {}).forEach(([k, v]) => {
+        mapping.set(String(k), String(v));
+      });
+      (currentFormFields || []).forEach((f: any) => {
+        if (f?.fieldId) mapping.set(String(f.fieldId), String(f.label || f.fieldId));
+        if (f?.type === "subtable" && Array.isArray(f.subtableFields)) {
+          f.subtableFields.forEach((sf: any) => {
+            if (sf?.fieldId) mapping.set(String(sf.fieldId), `${f.label || f.fieldId}.${sf.label || sf.fieldId}`);
+          });
+        }
+      });
+      let text = String(raw);
+      const ids = Array.from(mapping.keys()).sort((a, b) => b.length - a.length);
+      ids.forEach((id) => {
+        const label = mapping.get(id) || id;
+        text = text.replaceAll(id, label);
+      });
+
+      // 兜底：规则字符串里残余的 field_xxx / subfield_xxx 再做一次替换
+      text = text.replace(
+        /(subfield_[A-Za-z0-9_]+|field_[A-Za-z0-9_]+)/g,
+        (token) => mapping.get(token) || token,
+      );
+
+      return text;
+    };
+
     if (rule.actions && rule.actions.length > 0) {
       const action = rule.actions[0];
       if (action.type === "executeScript" && action.script) {
-        return action.script;
+        return humanizeScript(action.script);
       }
       // 简单模式：根据操作类型和字段映射构建显示文本
       if (action.type === "updateRecord" || action.type === "createRecord") {

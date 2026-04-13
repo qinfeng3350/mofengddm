@@ -14,7 +14,8 @@
     "start:prod": "NODE_ENV=production node services/core/dist/main.js",
     "install:all": "npx -y pnpm install",
     "clean": "npx -y pnpm --filter core clean && npx -y pnpm --filter portal clean",
-    "clean:dist": "rm -rf services/core/dist apps/portal/dist"
+    "clean:dist": "rm -rf services/core/dist apps/portal/dist",
+    "audit": "npx -y pnpm audit --audit-level=high"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

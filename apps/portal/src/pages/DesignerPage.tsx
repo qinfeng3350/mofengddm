@@ -32,6 +32,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { FormSettingsPage } from "./FormSettingsPage";
 import { FormPreview } from "@/modules/form-designer/components/FormPreview";
+import { UserAccountDropdown } from "@/components/UserAccountDropdown";
 import "./DesignerPage.css";
 
 const { Header, Sider, Content } = Layout;
@@ -352,24 +353,7 @@ export const DesignerPage = () => {
               >
                 客服
               </Button>
-              <Dropdown
-                menu={{ items: userMenuItems as any }}
-                placement="bottomRight"
-                trigger={["click"]}
-              >
-                <Space style={{ cursor: "pointer" }}>
-                  <Avatar 
-                    size="small" 
-                    icon={<UserOutlined />}
-                    style={{ backgroundColor: "#1890ff" }}
-                  >
-                    {user?.name?.[0] || user?.account?.[0] || "U"}
-                  </Avatar>
-                  <span style={{ fontSize: 14, color: "#333" }}>
-                    {user?.name || user?.account || "用户"}
-                  </span>
-                </Space>
-              </Dropdown>
+              <UserAccountDropdown showUserName />
             </Space>
           </Header>
 

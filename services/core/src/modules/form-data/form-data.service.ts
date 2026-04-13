@@ -430,6 +430,77 @@ export class FormDataService {
     });
   }
 
+  async findPaged(
+    formId: string,
+    paging: { page: number; pageSize: number },
+    actor?: { userId?: string },
+  ): Promise<{ items: FormDataEntity[]; total: number }> {
+    const fd = await this.formDefinitionRepository.findOne({ where: { formId } });
+    if (!fd) {
+      throw new NotFoundException(`表单定义 ${formId} 不存在`);
+    }
+
+    const page = Math.max(1, Number(paging.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(paging.pageSize) || 20));
+
+    const [items, total] = await this.formDataRepository.findAndCount({
+      where: { formId, tenantId: fd.tenantId },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+
+    const config = this.parseConfig(fd.config);
+    const fieldPermissions = config?.metadata?.fieldPermissions;
+    const roleIds = await this.getUserRoleIds({
+      userId: actor?.userId,
+      tenantId: String(fd.tenantId),
+    });
+
+    const filteredItems = items.map((r) => {
+      const filtered = this.applyReadFilter({
+        data: r.data as any,
+        fieldPermissions,
+        nodeId: undefined,
+        roleIds,
+      });
+      return Object.assign(r as any, { data: filtered });
+    });
+
+    return { items: filteredItems, total };
+  }
+
+  /**
+   * 供业务规则使用：按 JSON 字段等值查找（仅覆盖当前规则引擎的 = 条件模型）
+   * 注意：fieldId 为 data 中的一级 key，例如 field_xxx / subfield_xxx
+   */
+  async findByJsonFieldEquals(options: {
+    formId: string;
+    tenantId: string | number;
+    fieldId: string;
+    value: any;
+    take?: number;
+  }): Promise<FormDataEntity[]> {
+    const { formId, tenantId, fieldId, value, take } = options;
+    // MySQL JSON 路径需要对 key 做引号转义：$."fieldId"
+    const jsonPath = `$.\"${String(fieldId).replaceAll('"', '\\"')}\"`;
+
+    const qb = this.formDataRepository
+      .createQueryBuilder('fd')
+      .where('fd.formId = :formId', { formId })
+      .andWhere('fd.tenantId = :tenantId', { tenantId: String(tenantId) })
+      // JSON_UNQUOTE 确保字符串对比一致；数值/布尔值也会转为字符串对比（与当前 evaluateCondition 的 == 行为一致）
+      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(fd.data, :jsonPath)) = :val", {
+        jsonPath,
+        val: value == null ? '' : String(value),
+      })
+      .orderBy('fd.createdAt', 'DESC');
+
+    if (take && take > 0) qb.take(take);
+
+    return qb.getMany();
+  }
+
   async findOne(recordId: string, actor?: { userId?: string }): Promise<FormDataEntity> {
     const formData = await this.findOneRaw(recordId);
 

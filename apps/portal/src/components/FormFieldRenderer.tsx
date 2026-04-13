@@ -887,6 +887,25 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
             control={control}
             rules={{
               required: field.required ? `${field.label}是必填项` : false,
+              validate: (value: any) => {
+                const rows = Array.isArray(value) ? value : [];
+                const subtableFields = (field as any).subtableFields || [];
+                const isEmpty = (v: any) =>
+                  v === undefined ||
+                  v === null ||
+                  (typeof v === "string" && v.trim() === "") ||
+                  (Array.isArray(v) && v.length === 0);
+                for (let i = 0; i < rows.length; i++) {
+                  const row = rows[i] || {};
+                  for (const sf of subtableFields) {
+                    if (!sf?.required || !sf?.fieldId) continue;
+                    if (isEmpty(row[sf.fieldId])) {
+                      return `第${i + 1}行「${sf.label || sf.fieldId}」为必填项`;
+                    }
+                  }
+                }
+                return true;
+              },
             }}
             render={({ field: formField, fieldState }) => {
               const subtableFields = (field as any).subtableFields || [];
@@ -895,6 +914,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
               const [currentPage, setCurrentPage] = useState(1);
               const [pageSize, setPageSize] = useState(10);
+              const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+              const isCellDisabled = (sf: any) => isDisabled || sf?.editable === false || sf?.type === "formula";
 
               // 子表公式计算与写回：禁止在 cell render 阶段调用 formField.onChange，
               // 否则会触发 React 报错：
@@ -1039,6 +1060,33 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               }> = ({ value, onChange, subField, disabled, currentRow }) => {
                 const [selectorVisible, setSelectorVisible] = useState(false);
                 const multiple = subField.type === "relatedFormMulti";
+                const extractRecordId = (raw: any): string | undefined => {
+                  if (raw == null) return undefined;
+                  if (typeof raw === "string" || typeof raw === "number") {
+                    const s = String(raw).trim();
+                    return s ? s : undefined;
+                  }
+                  if (typeof raw === "object") {
+                    const v =
+                      (raw as any).recordId ??
+                      (raw as any).id ??
+                      (raw as any).value ??
+                      (raw as any).record_id;
+                    if (v == null) return undefined;
+                    const s = String(v).trim();
+                    return s ? s : undefined;
+                  }
+                  return undefined;
+                };
+                const extractRecordIds = (raw: any): string[] => {
+                  if (Array.isArray(raw)) {
+                    return raw
+                      .map((item) => extractRecordId(item))
+                      .filter((id): id is string => !!id);
+                  }
+                  const one = extractRecordId(raw);
+                  return one ? [one] : [];
+                };
 
                 // 获取关联表单定义
                 const { data: relatedFormDefinition } = useQuery({
@@ -1048,8 +1096,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 });
 
                 // 已选记录（单选）
-                const selectedRecordId = !multiple && typeof value === "string" ? value : undefined;
-                const selectedIds = multiple && Array.isArray(value) ? value : [];
+                const selectedRecordId = !multiple ? extractRecordId(value) : undefined;
+                const selectedIds = multiple ? extractRecordIds(value) : [];
 
                 const { data: selectedRecord } = useQuery({
                   queryKey: ["formData", selectedRecordId],
@@ -1106,7 +1154,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                     }
                     return selectedRecord.recordId;
                   }
-                  return subField.placeholder || "点击选择关联表单数据";
+                  // 兜底：即使详情查询失败，也要显示已选ID，避免看起来像“未选择”
+                  return selectedRecordId;
                 }, [multiple, selectedIds, selectedRecordId, selectedRecord, subField, relatedFormDefinition]);
 
                 const handleSelect = (record: FormDataResponse | FormDataResponse[]) => {
@@ -1220,9 +1269,51 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   },
                 },
                 ...subtableFields.map((subField: any) => ({
-                  title: subField.label,
+                  title: (
+                    <Space size={6}>
+                      <span>{subField.label}</span>
+                      <Button
+                        type="text"
+                        size="small"
+                        style={{ padding: 0, minWidth: 18, height: 18, lineHeight: "18px" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setColumnWidths((prev) => ({
+                            ...prev,
+                            [subField.fieldId]: Math.max(120, (prev[subField.fieldId] || 180) - 20),
+                          }));
+                        }}
+                      >
+                        -
+                      </Button>
+                      <Button
+                        type="text"
+                        size="small"
+                        style={{ padding: 0, minWidth: 18, height: 18, lineHeight: "18px" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setColumnWidths((prev) => ({
+                            ...prev,
+                            [subField.fieldId]: Math.min(560, (prev[subField.fieldId] || 180) + 20),
+                          }));
+                        }}
+                      >
+                        +
+                      </Button>
+                    </Space>
+                  ),
                   dataIndex: subField.fieldId,
                   key: subField.fieldId,
+                  width: columnWidths[subField.fieldId] || 180,
+                  sorter:
+                    subField.type === "number"
+                      ? (a: any, b: any) =>
+                          Number(a?.[subField.fieldId] ?? 0) - Number(b?.[subField.fieldId] ?? 0)
+                      : (a: any, b: any) =>
+                          String(a?.[subField.fieldId] ?? "").localeCompare(
+                            String(b?.[subField.fieldId] ?? ""),
+                            "zh-CN",
+                          ),
                   render: (text: any, record: any, index: number) => {
                     let effectiveText = text;
 
@@ -1268,7 +1359,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             placeholder="请输入"
                             size="small"
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                           />
                         );
                       case "textarea":
@@ -1278,7 +1369,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             placeholder="请输入"
                             rows={2}
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                           />
                         );
                       case "number":
@@ -1317,7 +1408,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             placeholder="请输入"
                             size="small"
                             style={{ width: "100%" }}
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                           />
                         );
                       case "date":
@@ -1338,7 +1429,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             placeholder={sfFormat}
                             size="small"
                             style={{ width: "100%" }}
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                           />
                         );
                       case "select":
@@ -1349,7 +1440,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             placeholder="请选择"
                             size="small"
                             style={{ width: "100%" }}
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                             options={subField.options?.map((opt: any) => ({
                               label: opt.label,
                               value: String(opt.value),
@@ -1361,7 +1452,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                           <Radio.Group
                             value={effectiveText}
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                           >
                             {subField.options?.map((opt: any) => (
                               <Radio key={opt.value} value={String(opt.value)}>
@@ -1377,7 +1468,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             onChange={(checked) => handleCellChange(checked, index, subField.fieldId)}
                             checkedChildren="是"
                             unCheckedChildren="否"
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                             size="small"
                           />
                         );
@@ -1427,7 +1518,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                           <SubtableRelatedCell
                             value={effectiveText}
                             subField={subField}
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                             currentRow={currentRow}
                             onChange={(val, extraUpdates) => {
                               const newData = [...dataSource];
@@ -1490,7 +1581,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             onChange={(e) => handleCellChange(e.target.value, index, subField.fieldId)}
                             placeholder="请输入"
                             size="small"
-                            disabled={isDisabled}
+                            disabled={isCellDisabled(subField)}
                           />
                         );
                     }
@@ -1512,6 +1603,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                               danger: true,
                               icon: <DeleteOutlined />,
                               onClick: () => {
+                                    if (isDisabled) return;
                                 const newData = dataSource.filter((_: any, i: number) => i !== actualIndex);
                                 formField.onChange(newData);
                               },
@@ -1629,7 +1721,16 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     size="small"
                                     rowKey={(_, index) => `row-${startIndex + index}`}
                                     style={{ margin: 0 }}
-                                    bordered={false}
+                                    bordered
+                                    tableLayout="fixed"
+                                    rowClassName={(_, index) =>
+                                      index % 2 === 0 ? "runtime-subtable-row-even" : "runtime-subtable-row-odd"
+                                    }
+                                    onRow={(_, index) => ({
+                                      style: {
+                                        background: (index || 0) % 2 === 0 ? "#ffffff" : "#fafcff",
+                                      },
+                                    })}
                                   />
                                 </div>
                                 {/* 底部信息栏 */}
@@ -1797,6 +1898,33 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
         const RelatedFormField = () => {
           const [selectorVisible, setSelectorVisible] = useState(false);
           const multiple = field.type === "relatedFormMulti";
+            const extractRecordId = (raw: any): string | undefined => {
+              if (raw == null) return undefined;
+              if (typeof raw === "string" || typeof raw === "number") {
+                const s = String(raw).trim();
+                return s ? s : undefined;
+              }
+              if (typeof raw === "object") {
+                const v =
+                  (raw as any).recordId ??
+                  (raw as any).id ??
+                  (raw as any).value ??
+                  (raw as any).record_id;
+                if (v == null) return undefined;
+                const s = String(v).trim();
+                return s ? s : undefined;
+              }
+              return undefined;
+            };
+            const extractRecordIds = (raw: any): string[] => {
+              if (Array.isArray(raw)) {
+                return raw
+                  .map((item) => extractRecordId(item))
+                  .filter((id): id is string => !!id);
+              }
+              const one = extractRecordId(raw);
+              return one ? [one] : [];
+            };
 
           // 获取关联表单的定义
           const { data: relatedFormDefinition } = useQuery({
@@ -1807,7 +1935,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
 
           // 获取已选中的记录数据（用于显示）
           const currentValue = control._formValues?.[field.fieldId];
-          const selectedRecordIds = currentValue as string | string[] | undefined;
+          const selectedRecordIds = extractRecordIds(currentValue);
           const selectedRecordId = Array.isArray(selectedRecordIds)
             ? selectedRecordIds[0]
             : selectedRecordIds;
@@ -1938,7 +2066,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 }
                 return selectedRecord.recordId;
               }
-              return field.placeholder || "点击选择关联表单数据";
+              // 兜底：详情查询失败/未返回时，至少显示已选ID，避免误判为未选择
+              return String(selectedRecordId);
             }
           };
 

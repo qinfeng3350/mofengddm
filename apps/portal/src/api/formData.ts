@@ -27,6 +27,17 @@ export const formDataApi = {
     return apiClient.get(`/form-data/form/${formId}`);
   },
 
+  getPagedByForm: async (
+    formId: string,
+    params: { page: number; pageSize: number },
+  ): Promise<{ items: FormDataResponse[]; total: number }> => {
+    const search = new URLSearchParams();
+    search.set("page", String(params.page));
+    search.set("pageSize", String(params.pageSize));
+    const res = await apiClient.get(`/form-data/form/${formId}/paged?${search.toString()}`);
+    return res && typeof res === "object" ? res : { items: [], total: 0 };
+  },
+
   getById: async (recordId: string): Promise<FormDataResponse> => {
     return apiClient.get(`/form-data/${recordId}`);
   },

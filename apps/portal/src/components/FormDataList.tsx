@@ -159,14 +159,18 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     setRowHoverTip(null);
   }, [formId]);
 
+  // 分页（改为服务端分页：避免一次拉全表导致后端慢/超时）
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
   // 表单数据
   const {
     data,
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ["formData", formId],
-    queryFn: () => formDataApi.getListByForm(formId),
+    queryKey: ["formData", formId, "paged", currentPage, pageSize],
+    queryFn: () => formDataApi.getPagedByForm(formId, { page: currentPage, pageSize }),
     enabled: !!formId,
     refetchOnWindowFocus: false,
     refetchOnMount: true,
@@ -714,10 +718,22 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     return () => clearTimeout(t);
   }, [columnWidths, formId]);
 
+  const rawList = useMemo(() => {
+    if (!data) return [];
+    if (Array.isArray(data as any)) return data as any[];
+    if (Array.isArray((data as any).items)) return (data as any).items as any[];
+    return [];
+  }, [data]);
+
+  const serverTotal = useMemo(() => {
+    const t = (data as any)?.total;
+    return typeof t === "number" ? t : rawList.length;
+  }, [data, rawList.length]);
+
   // 数据源映射
   const rowData = useMemo(() => {
-    if (!data || !Array.isArray(data)) return [];
-    return data.map((record: any, index: number) => {
+    if (!rawList.length) return [];
+    return rawList.map((record: any, index: number) => {
       const recordData = record.data || {};
       const mapped: any = { ...recordData };
       return {
@@ -727,7 +743,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
         recordId: record.recordId || record.id,
       };
     });
-  }, [data]);
+  }, [rawList]);
 
   // 按“视图配置”做前端过滤（目前只支持简单 operator/value）
   const viewFilteredRowData = useMemo(() => {
@@ -785,10 +801,6 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     return rowData.filter((record) => selectedView.filterConditions.every((c) => evalOne(record, c)));
   }, [rowData, selectedView]);
 
-  // 分页
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-
   // 滚动条同步相关 refs
   const tableBodyRef = useRef<HTMLDivElement>(null);
   const FIXED_SCROLL_OFFSET = 360;
@@ -798,15 +810,12 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   const [tableScrollY, setTableScrollY] = useState<number>(calcFixedScrollY);
 
   useEffect(() => {
-    // 数据变化时重置到第一页
+    // formId 或页大小变化：重置到第一页（避免落在空页）
     setCurrentPage(1);
-  }, [viewFilteredRowData.length]);
+  }, [formId, pageSize]);
 
-  const pagedRowData = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    const end = start + pageSize;
-    return viewFilteredRowData.slice(start, end);
-  }, [viewFilteredRowData, currentPage, pageSize]);
+  // 服务端分页后，当前页数据已由后端裁剪；本地筛选仅作用于当前页
+  const pagedRowData = useMemo(() => viewFilteredRowData, [viewFilteredRowData]);
 
   useEffect(() => {
     const onResize = () => {
@@ -1834,7 +1843,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
               size="small"
               current={currentPage}
               pageSize={pageSize}
-              total={rowData.length}
+              total={serverTotal}
               showSizeChanger
               pageSizeOptions={["10", "20", "50", "100"]}
               onChange={(page, size) => {
@@ -2218,7 +2227,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
               size="small"
               current={currentPage}
               pageSize={pageSize}
-              total={rowData.length}
+              total={serverTotal}
               showSizeChanger
               pageSizeOptions={["10", "20", "50", "100"]}
               onChange={(page, size) => {

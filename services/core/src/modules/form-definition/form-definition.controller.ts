@@ -14,7 +14,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FormDefinitionService } from './form-definition.service';
 import { CreateFormDefinitionDto } from './dto/create-form-definition.dto';
-import { TenantEntity } from '../../database/entities/tenant.entity';
 import { ApplicationEntity } from '../../database/entities/application.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RoleService } from '../role/role.service';
@@ -24,25 +23,13 @@ import { RoleService } from '../role/role.service';
 export class FormDefinitionController {
   constructor(
     private readonly formDefinitionService: FormDefinitionService,
-    @InjectRepository(TenantEntity)
-    private tenantRepository: Repository<TenantEntity>,
     @InjectRepository(ApplicationEntity)
     private applicationRepository: Repository<ApplicationEntity>,
     private readonly roleService: RoleService,
   ) {}
 
-  private async getDefaultTenantId(): Promise<string> {
-    const tenant = await this.tenantRepository.findOne({
-      where: { code: 'default' },
-    });
-    if (!tenant) {
-      throw new Error('默认租户不存在，请先初始化数据库');
-    }
-    return tenant.id;
-  }
-
-  private resolveTenantAndUser(req: any, defaultTenantId?: string) {
-    const tenantId = req?.user?.tenantId || defaultTenantId;
+  private resolveTenantAndUser(req: any) {
+    const tenantId = req?.user?.tenantId;
     const userId = req?.user?.userId || req?.user?.id || 'default-user';
     if (!tenantId) {
       throw new UnauthorizedException('无法确定租户，请重新登录');
@@ -55,7 +42,7 @@ export class FormDefinitionController {
     @Body() createDto: CreateFormDefinitionDto & { applicationId?: string },
     @Request() req: any,
   ) {
-    const { tenantId, userId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    const { tenantId, userId } = this.resolveTenantAndUser(req);
     await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     
     // 如果没有提供applicationId，获取默认应用
@@ -79,13 +66,13 @@ export class FormDefinitionController {
 
   @Get()
   async findAll(@Request() req: any) {
-    const { tenantId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    const { tenantId } = this.resolveTenantAndUser(req);
     return this.formDefinitionService.findAll(tenantId);
   }
 
   @Get(':id')
   async findOne(@Param('id') id: string, @Request() req: any) {
-    const { tenantId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    const { tenantId } = this.resolveTenantAndUser(req);
     return this.formDefinitionService.findOne(id, tenantId);
   }
 
@@ -95,14 +82,14 @@ export class FormDefinitionController {
     @Body() updateDto: Partial<CreateFormDefinitionDto>,
     @Request() req: any,
   ) {
-    const { tenantId, userId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    const { tenantId, userId } = this.resolveTenantAndUser(req);
     await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     return this.formDefinitionService.update(id, updateDto, tenantId, userId);
   }
 
   @Delete(':id')
   async remove(@Param('id') id: string, @Request() req: any) {
-    const { tenantId, userId } = this.resolveTenantAndUser(req, await this.getDefaultTenantId());
+    const { tenantId, userId } = this.resolveTenantAndUser(req);
     await this.roleService.assertSystemAdmin({ tenantId: String(tenantId), userId: String(userId) });
     return this.formDefinitionService.remove(id, tenantId, userId);
   }

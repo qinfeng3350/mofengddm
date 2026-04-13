@@ -5,6 +5,7 @@ import { BusinessRuleEntity } from '../../database/entities/business-rule.entity
 import { FormDataEntity } from '../../database/entities/form-data.entity';
 import { FormDefinitionEntity } from '../../database/entities/form-definition.entity';
 import { FormDataService } from '../form-data/form-data.service';
+import { OperationLogService } from '../operation-log/operation-log.service';
 
 interface RuleContext {
   formId: string;
@@ -12,6 +13,9 @@ interface RuleContext {
   recordId: string;
   data: Record<string, any>;
   userId?: string;
+  ruleId?: string;
+  ruleName?: string;
+  triggerEvent?: 'create' | 'update' | 'delete' | 'statusChange';
 }
 
 @Injectable()
@@ -27,6 +31,7 @@ export class BusinessRuleExecutorService {
     private formDefinitionRepository: Repository<FormDefinitionEntity>,
     @Inject(forwardRef(() => FormDataService))
     private formDataService: FormDataService,
+    private operationLogService: OperationLogService,
   ) {}
 
   /**
@@ -88,7 +93,12 @@ export class BusinessRuleExecutorService {
           
           if (conditionsMet) {
             this.logger.log(`[业务规则] 开始执行规则 ${rule.ruleId} 的动作，共 ${rule.actions.length} 个动作`);
-            await this.executeActions(rule.actions, enhancedContext);
+            await this.executeActions(rule.actions, {
+              ...enhancedContext,
+              ruleId: rule.ruleId,
+              ruleName: rule.ruleName,
+              triggerEvent: event,
+            });
             this.logger.log(`[业务规则] 规则 ${rule.ruleId} 执行完成`);
           }
         } catch (error) {
@@ -433,6 +443,20 @@ export class BusinessRuleExecutorService {
       { recordId: context.recordId, tenantId: context.tenantId },
       { data: updatedData },
     );
+    const changedFields = Object.keys(fieldMapping);
+    const fieldChanges = this.buildFieldChanges(oldData, updatedData, changedFields);
+    if (fieldChanges.length > 0) {
+      await this.operationLogService.logOperation(
+        context.tenantId,
+        context.formId,
+        context.recordId,
+        'update',
+        context.userId || 'system',
+        `业务规则:${context.ruleName || '未命名规则'}`,
+        fieldChanges,
+        this.buildRuleDescription(context),
+      );
+    }
 
     this.logger.log(`[UPDATE_CURRENT] 记录更新成功`);
   }
@@ -460,19 +484,44 @@ export class BusinessRuleExecutorService {
       }
     }
 
-    // 查询符合条件的记录
-    const records = await this.formDataService.findAll(targetFormId);
-    const matchedRecords = records.filter((record) => {
-      return this.evaluateCondition(condition, record.data, context);
+    // 仅支持当前引擎的「=」条件：left=right
+    const equalIndex = condition.indexOf('=');
+    if (equalIndex <= 0) return;
+    const leftExpr = condition.substring(0, equalIndex).trim();
+    const rightExpr = condition.substring(equalIndex + 1).trim();
+    const fieldId = leftExpr.includes('.') ? leftExpr.split('.').pop()!.trim() : leftExpr;
+    const rightValue = this.resolveValue(rightExpr, context);
+
+    // 数据库侧筛选匹配记录（避免全表 findAll）
+    const matchedRecords = await this.formDataService.findByJsonFieldEquals({
+      formId: String(targetFormId),
+      tenantId: context.tenantId,
+      fieldId,
+      value: rightValue,
+      take: 500,
     });
 
-    // 更新每条记录
     for (const record of matchedRecords) {
+      const oldData = { ...(record.data || {}) };
       const updatedData = { ...record.data, ...fieldMapping };
       await this.formDataRepository.update(
         { recordId: record.recordId, tenantId: context.tenantId },
         { data: updatedData },
       );
+      const changedFields = Object.keys(fieldMapping);
+      const fieldChanges = this.buildFieldChanges(oldData, updatedData, changedFields);
+      if (fieldChanges.length > 0) {
+        await this.operationLogService.logOperation(
+          context.tenantId,
+          String(targetFormId),
+          record.recordId,
+          'update',
+          context.userId || 'system',
+          `业务规则:${context.ruleName || '未命名规则'}`,
+          fieldChanges,
+          this.buildRuleDescription(context),
+        );
+      }
     }
   }
 
@@ -493,11 +542,22 @@ export class BusinessRuleExecutorService {
     const condition = args[1];
     this.logger.log(`[UPSERT] 匹配条件: ${condition}`);
     
-    // 查询符合条件的记录（先查询，以便在增强上下文中使用）
-    const records = await this.formDataService.findAll(targetFormId);
-    const matchedRecord = records.find((record) => {
-      return this.evaluateCondition(condition, record.data, context);
-    });
+    // 仅支持当前引擎的「=」条件：left=right（用于定位目标记录）
+    const equalIndex = condition.indexOf('=');
+    const leftExpr = equalIndex > 0 ? condition.substring(0, equalIndex).trim() : '';
+    const rightExpr = equalIndex > 0 ? condition.substring(equalIndex + 1).trim() : '';
+    const fieldId = leftExpr ? (leftExpr.includes('.') ? leftExpr.split('.').pop()!.trim() : leftExpr) : '';
+    const rightValue = rightExpr ? this.resolveValue(rightExpr, context) : undefined;
+
+    const matchedRecord = fieldId
+      ? (await this.formDataService.findByJsonFieldEquals({
+          formId: String(targetFormId),
+          tenantId: context.tenantId,
+          fieldId,
+          value: rightValue,
+          take: 1,
+        }))[0]
+      : undefined;
 
     // 创建增强的上下文，包含目标记录数据（用于解析"表单名.字段ID"）
     const enhancedContext: RuleContext = {
@@ -538,11 +598,26 @@ export class BusinessRuleExecutorService {
       // 更新现有记录
       this.logger.log(`[UPSERT] 找到匹配记录，更新记录: ${matchedRecord.recordId}`);
       this.logger.log(`[UPSERT] 字段映射:`, JSON.stringify(finalFieldMapping).substring(0, 200));
+      const oldData = { ...(matchedRecord.data || {}) };
       const updatedData = { ...matchedRecord.data, ...finalFieldMapping };
       await this.formDataRepository.update(
         { recordId: matchedRecord.recordId, tenantId: context.tenantId },
         { data: updatedData },
       );
+      const changedFields = Object.keys(finalFieldMapping);
+      const fieldChanges = this.buildFieldChanges(oldData, updatedData, changedFields);
+      if (fieldChanges.length > 0) {
+        await this.operationLogService.logOperation(
+          context.tenantId,
+          String(targetFormId),
+          matchedRecord.recordId,
+          'update',
+          context.userId || 'system',
+          `业务规则:${context.ruleName || '未命名规则'}`,
+          fieldChanges,
+          this.buildRuleDescription(context),
+        );
+      }
       this.logger.log(`[UPSERT] 记录更新成功`);
     } else {
       // 创建新记录
@@ -554,9 +629,30 @@ export class BusinessRuleExecutorService {
           data: finalFieldMapping,
         },
         context.userId || 'system',
+        `业务规则:${context.ruleName || '未命名规则'}`,
       );
       this.logger.log(`[UPSERT] 记录创建成功`);
     }
+  }
+
+  private buildRuleDescription(context: RuleContext): string {
+    const ruleName = context.ruleName || context.ruleId || '未命名规则';
+    const trigger = context.triggerEvent || 'unknown';
+    return `业务规则「${ruleName}」执行（触发事件: ${trigger}，来源表单: ${context.formId}，来源记录: ${context.recordId}）`;
+  }
+
+  private buildFieldChanges(
+    oldData: Record<string, any>,
+    newData: Record<string, any>,
+    fieldIds: string[],
+  ): Array<{ fieldId: string; oldValue: any; newValue: any; fieldLabel?: string }> {
+    return fieldIds
+      .filter((fieldId) => JSON.stringify(oldData?.[fieldId]) !== JSON.stringify(newData?.[fieldId]))
+      .map((fieldId) => ({
+        fieldId,
+        oldValue: oldData?.[fieldId],
+        newValue: newData?.[fieldId],
+      }));
   }
 
   /**
@@ -570,15 +666,23 @@ export class BusinessRuleExecutorService {
     const targetFormId = this.resolveValue(args[0], context);
     const condition = args[1];
 
-    // 查询符合条件的记录
-    const records = await this.formDataService.findAll(targetFormId);
-    const matchedRecords = records.filter((record) => {
-      return this.evaluateCondition(condition, record.data, context);
+    const equalIndex = condition.indexOf('=');
+    if (equalIndex <= 0) return;
+    const leftExpr = condition.substring(0, equalIndex).trim();
+    const rightExpr = condition.substring(equalIndex + 1).trim();
+    const fieldId = leftExpr.includes('.') ? leftExpr.split('.').pop()!.trim() : leftExpr;
+    const rightValue = this.resolveValue(rightExpr, context);
+
+    const matchedRecords = await this.formDataService.findByJsonFieldEquals({
+      formId: String(targetFormId),
+      tenantId: context.tenantId,
+      fieldId,
+      value: rightValue,
+      take: 500,
     });
 
-    // 删除每条记录
     for (const record of matchedRecords) {
-      await this.formDataService.remove(record.recordId, context.userId || 'system');
+      await this.formDataService.remove(record.recordId, context.userId || 'system', `业务规则:${context.ruleName || '未命名规则'}`);
     }
   }
 
@@ -946,11 +1050,36 @@ export class BusinessRuleExecutorService {
     const parts = fieldPath.split('.');
     let value = data;
 
+    const tryResolveKey = (obj: Record<string, any>, rawKey: string): string | undefined => {
+      if (!obj || typeof obj !== 'object') return undefined;
+      if (rawKey in obj) return rawKey;
+
+      // 兼容历史规则中拼接出来的复合key：xxx-field_xxx-subfield_xxx
+      const byDash = String(rawKey).split('-').filter(Boolean);
+      for (let i = byDash.length - 1; i >= 0; i--) {
+        const token = byDash[i];
+        if (token in obj) return token;
+      }
+
+      // 再尝试提取 field_/subfield_ 形式的标准字段ID
+      const matched = String(rawKey).match(/(subfield_[A-Za-z0-9_]+|field_[A-Za-z0-9_]+)/g);
+      if (matched && matched.length > 0) {
+        for (let i = matched.length - 1; i >= 0; i--) {
+          const token = matched[i];
+          if (token in obj) return token;
+        }
+      }
+
+      return undefined;
+    };
+
     for (const part of parts) {
       if (value == null || typeof value !== 'object') {
         return undefined;
       }
-      value = value[part];
+      const resolvedKey = tryResolveKey(value as Record<string, any>, part);
+      if (!resolvedKey) return undefined;
+      value = value[resolvedKey];
     }
 
     return value;

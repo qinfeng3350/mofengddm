@@ -50,6 +50,7 @@ import { SpreadsheetEditor } from "@/components/SpreadsheetEditor";
 import type { SpreadsheetEditorRef } from "@/components/SpreadsheetEditor";
 import { DraggableFieldItem } from "@/components/DraggableFieldItem";
 import { PrintPreviewTable } from "@/components/PrintPreviewTable";
+import { UserAccountDropdown } from "@/components/UserAccountDropdown";
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
@@ -555,69 +556,7 @@ export const PrintTemplateDesignerPage: React.FC = () => {
           <Button icon={<QuestionCircleOutlined />} type="text">
             客服
           </Button>
-          <Dropdown
-            placement="bottomRight"
-            menu={{
-              items: [
-                {
-                  key: "tenant-title",
-                  label: (
-                    <div style={{ fontSize: 12, color: "#999" }}>
-                      {currentUserInfo?.tenant?.name || currentUserInfo?.tenant?.code || "默认租户"}
-                    </div>
-                  ),
-                  disabled: true,
-                },
-                {
-                  key: "tenant-switch",
-                  icon: <SwapOutlined />,
-                  label: "切换",
-                  // 兜底：确保点击一定触发打开（有些 AntD Dropdown 使用场景下 menu.onClick 不触发）
-                  onClick: () => {
-                    // no-op
-                    void handleTenantSwitchOpen();
-                  },
-                },
-                { type: "divider" },
-                { key: "profile", icon: <SolutionOutlined />, label: "个人信息" },
-                { key: "org", icon: <TeamOutlined />, label: "组织机构" },
-                { key: "perm", icon: <SafetyOutlined />, label: "权限管理" },
-                { key: "plugin", icon: <ApiOutlined />, label: "插件中心" },
-                {
-                  key: "ai",
-                  icon: <RocketOutlined />,
-                  label: (
-                    <Space size={4}>
-                      <span>AI能力中心</span>
-                      <Tag color="red" style={{ marginLeft: 4, lineHeight: "18px" }}>new</Tag>
-                    </Space>
-                  ),
-                },
-                { key: "system", icon: <SettingOutlined />, label: "系统管理" },
-                { key: "template-center", icon: <ProfileOutlined />, label: "模板中心" },
-                { key: "site", icon: <LinkOutlined />, label: "墨枫官网" },
-                { type: "divider" },
-                {
-                  key: "logout",
-                  icon: <LogoutOutlined />,
-                  label: "退出登录",
-                },
-              ],
-              onClick: handleUserMenuClick,
-            }}
-          >
-            <Space style={{ cursor: "pointer" }}>
-              <Avatar
-                icon={<UserOutlined />}
-                style={{ marginRight: 8, backgroundColor: "#1890ff" }}
-              >
-                {(user?.name?.[0] || user?.account?.[0] || "").toUpperCase()}
-              </Avatar>
-              <span style={{ marginRight: 8, fontSize: 14, color: "#333" }}>
-                {user?.name || user?.account || "未登录"}
-              </span>
-            </Space>
-          </Dropdown>
+          <UserAccountDropdown showUserName />
           <Button icon={<SearchOutlined />} type="text" />
           <Button icon={<PlusOutlined />} type="text" />
           <Space>

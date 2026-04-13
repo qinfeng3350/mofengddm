@@ -33,7 +33,33 @@ export class OperationLogEntity {
   @Column({ name: 'operator_name', type: 'varchar', length: 255, nullable: true })
   operatorName?: string;
 
-  @Column({ type: 'json', nullable: true })
+  // 兼容历史建表为 TEXT 的字段：用 transformer 做 JSON 序列化/反序列化
+  @Column({
+    name: 'fieldChanges',
+    type: 'text',
+    nullable: true,
+    transformer: {
+      to: (v: any) => {
+        if (v == null) return null;
+        try {
+          return typeof v === 'string' ? v : JSON.stringify(v);
+        } catch {
+          return null;
+        }
+      },
+      from: (v: any) => {
+        if (v == null) return undefined;
+        if (Array.isArray(v)) return v;
+        if (typeof v !== 'string') return v;
+        try {
+          const parsed = JSON.parse(v);
+          return parsed;
+        } catch {
+          return undefined;
+        }
+      },
+    },
+  })
   fieldChanges?: Array<{
     fieldId: string;
     fieldLabel?: string;
