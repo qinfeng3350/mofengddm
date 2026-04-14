@@ -604,12 +604,28 @@ export class WorkflowService {
         sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
       });
 
-      // 部署后 DingTalk 必须能通过公网域名访问 detailUrl（生产勿用 localhost）
-      const portalBaseUrl =
+      // 详情链接基址：本地优先 localhost，生产必须是公网域名（避免把 localhost 发到钉钉）
+      const configuredPortalBaseUrl =
         (this.configService.get<string>('portal.baseUrl') || '').trim() ||
         process.env.PORTAL_BASE_URL ||
         process.env.PORTAL_PUBLIC_BASE_URL ||
-        process.env.PUBLIC_PORTAL_URL;
+        process.env.PUBLIC_PORTAL_URL ||
+        '';
+      const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+      const localDevPortal = 'http://localhost:5173';
+      let portalBaseUrl = configuredPortalBaseUrl || (!isProd ? localDevPortal : '');
+
+      if (isProd && /localhost|127\.0\.0\.1/i.test(portalBaseUrl)) {
+        const serverName = String(process.env.SERVER_NAME || process.env.DOMAIN || '').trim();
+        if (serverName) {
+          portalBaseUrl = `https://${serverName}`;
+        } else {
+          console.warn(
+            '[WorkflowService] 跳过钉钉待办：生产环境 PORTAL_BASE_URL 仍为 localhost，且未提供 SERVER_NAME/DOMAIN。',
+          );
+          return null;
+        }
+      }
 
       if (!portalBaseUrl) {
         console.warn(

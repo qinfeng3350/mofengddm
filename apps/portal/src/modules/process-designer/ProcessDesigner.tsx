@@ -1776,7 +1776,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                       mergeDingtalkMeta({ messageFormFields: next });
                                     }}
                                   />
-                                  <Input value={item.token} readOnly />
+                                  <Input value={`{${item.label}}`} readOnly />
                                   <Dropdown
                                     menu={{
                                       items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
@@ -1912,7 +1912,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                             { label: "提交时间", token: "{更新时间}" },
                           ]).map((item, idx) => (
                             <div key={`${item.token}-preview-${idx}`} style={{ color: "#666", marginBottom: 6 }}>
-                              {item.label}：{item.token}
+                              {item.label}：{`{${item.label}}`}
                             </div>
                           ))}
                           <div style={{ marginBottom: 8 }} />
