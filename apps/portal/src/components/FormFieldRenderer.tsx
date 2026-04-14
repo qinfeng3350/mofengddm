@@ -1074,15 +1074,14 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 currentRow?: Record<string, unknown>;
               }> = ({ value, onChange, subField, disabled, currentRow }) => {
                 const [selectorVisible, setSelectorVisible] = useState(false);
+                const isLikelyFormRecordId = (rawId: string) =>
+                  /^record_[\w-]+$/i.test(rawId) ||
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawId);
                 const extractRecordId = (raw: any): string | undefined => {
                   if (raw == null) return undefined;
                   if (typeof raw === "string" || typeof raw === "number") {
                     const s = String(raw).trim();
-                    if (!s) return undefined;
-                    return /^record_[\w-]+$/i.test(s) ||
-                      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
-                      ? s
-                      : undefined;
+                    return s || undefined;
                   }
                   if (typeof raw === "object") {
                     const v =
@@ -1116,11 +1115,13 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 // 子表弹窗可能存多条 recordId（数组），与字段类型是否为 relatedFormMulti 无关
                 const selectedIds = extractRecordIds(value);
                 const selectedRecordId = selectedIds.length === 1 ? selectedIds[0] : undefined;
+                const selectedRecordIdForQuery =
+                  selectedRecordId && isLikelyFormRecordId(selectedRecordId) ? selectedRecordId : undefined;
 
                 const { data: selectedRecord } = useQuery({
-                  queryKey: ["formData", selectedRecordId],
-                  queryFn: () => formDataApi.getById(selectedRecordId!),
-                  enabled: !!selectedRecordId && selectedIds.length <= 1,
+                  queryKey: ["formData", selectedRecordIdForQuery],
+                  queryFn: () => formDataApi.getById(selectedRecordIdForQuery!),
+                  enabled: !!selectedRecordIdForQuery && selectedIds.length <= 1,
                 });
 
                 const displayText = useMemo(() => {
@@ -1129,6 +1130,10 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   }
                   if (selectedIds.length === 0) {
                     return subField.placeholder || "请选择";
+                  }
+                  // 历史数据可能直接存了展示文本（不是 recordId），直接回显文本
+                  if (selectedRecordId && !selectedRecordIdForQuery) {
+                    return selectedRecordId;
                   }
                   if (selectedRecord && relatedFormDefinition) {
                     const displayFieldId = subField.relatedDisplayField;
