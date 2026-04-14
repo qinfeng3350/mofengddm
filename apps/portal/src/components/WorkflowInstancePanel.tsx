@@ -4,10 +4,16 @@ import { Card, Descriptions, Timeline, Tag, Space, Input, Button, message, Popco
 import dayjs from "dayjs";
 import { workflowApi } from "@/api/workflow";
 import { formDataApi } from "@/api/formData";
+import { formDefinitionApi } from "@/api/formDefinition";
 import { apiClient } from "@/api/client";
 import { operationLogApi } from "@/api/operationLog";
 import { CheckOutlined, CloseOutlined, RollbackOutlined, BellOutlined } from "@ant-design/icons";
 import { useAuthStore } from "@/store/useAuthStore";
+import {
+  buildWorkflowStepDescription,
+  describeNextHumanAfterCurrent,
+  formatPendingHandlersLine,
+} from "@/utils/workflowDisplay";
 
 interface Props {
   recordId: string;
@@ -19,6 +25,13 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
     queryKey: ["formData", "forWorkflowPanel", recordId],
     queryFn: () => formDataApi.getById(recordId),
     enabled: !!recordId,
+    retry: 1,
+  });
+
+  const { data: formDefinition } = useQuery({
+    queryKey: ["formDefinition", "workflow-panel", formData?.formId],
+    queryFn: () => formDefinitionApi.getById(String(formData?.formId || "")),
+    enabled: !!formData?.formId,
     retry: 1,
   });
 
@@ -145,6 +158,10 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
     return assignees.map(String).includes(String(user.id));
   }, [pendingTask, user]);
 
+  const [pendingWorkflowAction, setPendingWorkflowAction] = useState<
+    "approve" | "reject" | "return" | null
+  >(null);
+
   const actionMutation = useMutation({
     mutationFn: async ({ action }: { action: "approve" | "reject" | "return" }) => {
       if (!instance || !pendingTask) return;
@@ -154,6 +171,8 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
         comment: comment || undefined,
       });
     },
+    onMutate: ({ action }) => setPendingWorkflowAction(action),
+    onSettled: () => setPendingWorkflowAction(null),
     onSuccess: () => {
       message.success("已提交处理");
       refetch();
@@ -212,6 +231,51 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
     return String(v);
   };
 
+  const fieldLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const cfg: any = (formDefinition as any)?.config || {};
+    const walk = (items: any[]) => {
+      (items || []).forEach((it: any) => {
+        if (!it || typeof it !== "object") return;
+        if (it.fieldId) {
+          map.set(String(it.fieldId), String(it.label || it.name || it.fieldId));
+          if (it.type === "subtable" && Array.isArray(it.subtableFields)) {
+            it.subtableFields.forEach((sf: any) => {
+              if (sf?.fieldId) {
+                map.set(String(sf.fieldId), String(sf.label || sf.name || sf.fieldId));
+              }
+            });
+          }
+        }
+        if (Array.isArray(it.children)) walk(it.children);
+        if (Array.isArray(it.columns)) {
+          it.columns.forEach((c: any) => Array.isArray(c?.children) && walk(c.children));
+        }
+      });
+    };
+    walk(cfg.elements || cfg.fields || []);
+    return map;
+  }, [formDefinition]);
+
+  const prettyFieldLabel = (fieldId?: string, fieldLabel?: string) => {
+    if (fieldLabel && !/^field_[A-Za-z0-9_]+$/.test(String(fieldLabel))) return String(fieldLabel);
+    const fid = String(fieldId || "");
+    return fieldLabelMap.get(fid) || (fid ? "字段" : "-");
+  };
+
+  const prettyDescription = (desc?: string) => {
+    if (!desc) return "";
+    let s = String(desc);
+    // 不显示 form_xxx / record_xxx 编码
+    s = s.replace(/form_[A-Za-z0-9_]+/g, "当前表单");
+    s = s.replace(/record_[A-Za-z0-9_]+/g, "当前记录");
+    // 把字段编码替换为可读名称
+    s = s.replace(/(subfield_[A-Za-z0-9_]+|field_[A-Za-z0-9_]+)/g, (token) => {
+      return fieldLabelMap.get(token) || "字段";
+    });
+    return s;
+  };
+
   return (
     <Card loading={isLoading}>
       <Tabs
@@ -242,35 +306,12 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
             <Descriptions.Item label="当前节点">{currentNodeLabel()}</Descriptions.Item>
             <Descriptions.Item label="待处理人">
               {(() => {
-                if (!pendingTask) return "-";
-                const ids: string[] = Array.isArray(pendingTask.assignees?.values) ? pendingTask.assignees.values : [];
-                if (!ids.length) return "-";
-                const names = ids.map((id) => resolveUser(id)).filter(Boolean);
-                return names.join("、") || "-";
+                if (!pendingTask) return "—";
+                return formatPendingHandlersLine(pendingTask.assignees, (id) => resolveUser(id));
               })()}
             </Descriptions.Item>
             <Descriptions.Item label="下一个审批人">
-              {(() => {
-                const def = instance?.definition;
-                const currentNodeId = instance.currentNodeId;
-                if (!currentNodeId || !def) return instance.status === "completed" ? "-" : "-";
-                try {
-                  const edges: any[] = def.edges || [];
-                  const nextEdge = edges.find((e) => e.source === currentNodeId || e.sourceId === currentNodeId);
-                  if (!nextEdge) return "流程结束";
-                  const nextNodeId = nextEdge.target || nextEdge.targetId;
-                  const nodes: any[] = def.nodes || [];
-                  const nextNode = nodes.find((n) => n.nodeId === nextNodeId || n.id === nextNodeId);
-                  if (!nextNode) return "-";
-                  if (nextNode.type === "end") return "结束";
-                  const assignees = nextNode.assignees?.values || [];
-                  if (assignees.length === 0) return "未指定";
-                  const names = assignees.map((id: any) => resolveUser(id)).filter(Boolean);
-                  return names.join("、") || "-";
-                } catch {
-                  return "-";
-                }
-              })()}
+              {describeNextHumanAfterCurrent(instance, (id) => resolveUser(id))}
             </Descriptions.Item>
           </Descriptions>
 
@@ -281,31 +322,21 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
                 direction="vertical"
                 size="small"
                 items={orderedDefinitionNodes.map((node) => {
-                  const hid = (instance.history || []).find((h: any) => h.nodeId === node.nodeId);
                   const done = (instance.history || []).some((h: any) => h.nodeId === node.nodeId);
                   const isCurrent = instance.currentNodeId === node.nodeId && instance.status === "running";
                   let status: "wait" | "process" | "finish" | "error" = "wait";
                   if (done) status = "finish";
                   else if (isCurrent) status = "process";
-                  const role =
-                    node.type === "approval"
-                      ? "审批"
-                      : node.type === "task"
-                        ? "抄送"
-                        : node.type === "start"
-                          ? "发起"
-                          : node.type === "end"
-                            ? "结束"
-                            : String(node.type || "");
+                  const desc = buildWorkflowStepDescription({
+                    node,
+                    instance,
+                    resolveUser,
+                    dayjs,
+                  });
                   return {
                     status,
                     title: nodeTypeTitle(node),
-                    description: (
-                      <span style={{ fontSize: 12, color: "#888" }}>
-                        {role}
-                        {hid?.at ? ` · ${dayjs(hid.at).format("YYYY-MM-DD HH:mm")}` : ""}
-                      </span>
-                    ),
+                    description: <span style={{ fontSize: 12, color: "#888" }}>{desc}</span>,
                   };
                 })}
               />
@@ -346,10 +377,30 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
                 rows={4}
               />
               <Space>
-                <Button type="primary" icon={<CheckOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "approve" })}>{pendingAtStartNode ? "提交" : "同意"}</Button>
-                <Button danger icon={<CloseOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "reject" })}>拒绝</Button>
+                <Button
+                  type="primary"
+                  icon={<CheckOutlined />}
+                  loading={pendingWorkflowAction === "approve"}
+                  onClick={() => actionMutation.mutate({ action: "approve" })}
+                >
+                  {pendingAtStartNode ? "提交" : "同意"}
+                </Button>
+                <Button
+                  danger
+                  icon={<CloseOutlined />}
+                  loading={pendingWorkflowAction === "reject"}
+                  onClick={() => actionMutation.mutate({ action: "reject" })}
+                >
+                  拒绝
+                </Button>
                 {!pendingAtStartNode && (
-                  <Button icon={<RollbackOutlined />} loading={actionMutation.status === "pending"} onClick={() => actionMutation.mutate({ action: "return" })}>退回</Button>
+                  <Button
+                    icon={<RollbackOutlined />}
+                    loading={pendingWorkflowAction === "return"}
+                    onClick={() => actionMutation.mutate({ action: "return" })}
+                  >
+                    退回
+                  </Button>
                 )}
               </Space>
             </Space>
@@ -414,12 +465,12 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
                     操作人：{resolveUser(log.operatorId, log.operatorName)}{" "}
                     {formData?.submitterName ? `（提交人：${formData.submitterName}）` : ""}
                   </div>
-                  {log.description ? <div style={{ color: "#666" }}>{log.description}</div> : null}
+                  {log.description ? <div style={{ color: "#666" }}>{prettyDescription(log.description)}</div> : null}
                   {fieldChanges.length > 0 ? (
                     <div style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 6, padding: 8 }}>
                       {fieldChanges.map((c: any, i: number) => (
                           <div key={`${log.id}-fc-${i}`} style={{ marginBottom: i === log.fieldChanges.length - 1 ? 0 : 6 }}>
-                            <b>{c.fieldLabel || c.fieldId}</b>：{prettyValue(c.oldValue)} {"->"} {prettyValue(c.newValue)}
+                            <b>{prettyFieldLabel(c.fieldId, c.fieldLabel)}</b>：{prettyValue(c.oldValue)} {"->"} {prettyValue(c.newValue)}
                           </div>
                       ))}
                     </div>

@@ -9,6 +9,7 @@ import dayjs from "dayjs";
 import { useAuthStore } from "@/store/useAuthStore";
 import { apiClient } from "@/api/client";
 import { extractAttachmentPreviewUrls } from "@/utils/attachmentDisplay";
+import { describeNextHumanAfterCurrent, formatPendingHandlersLine } from "@/utils/workflowDisplay";
 
 interface FormDataDetailProps {
   recordId: string;
@@ -74,6 +75,9 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
   }, [pendingTask, user]);
 
   const [approvalComment, setApprovalComment] = useState<string>("");
+  const [pendingWorkflowAction, setPendingWorkflowAction] = useState<
+    "approve" | "reject" | "return" | null
+  >(null);
 
   const actionMutation = useMutation({
     mutationFn: async ({ action }: { action: "approve" | "reject" | "return" }) => {
@@ -84,6 +88,8 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
         comment: approvalComment || undefined,
       });
     },
+    onMutate: ({ action }) => setPendingWorkflowAction(action),
+    onSettled: () => setPendingWorkflowAction(null),
     onSuccess: () => {
       message.success("已提交处理");
       refetchWorkflow();
@@ -277,34 +283,12 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
                 <Descriptions.Item label="待处理人">
                   {(() => {
                     const pendingTask = (workflowInstance.tasks || []).find((t: any) => t.status === "pending");
-                    if (!pendingTask) return "-";
-                    const ids: string[] = Array.isArray(pendingTask.assignees?.values) ? pendingTask.assignees.values : [];
-                    if (!ids.length) return "-";
-                    const names = ids.map((id) => resolveUser(id)).filter(Boolean);
-                    return names.join("、") || "-";
+                    if (!pendingTask) return "—";
+                    return formatPendingHandlersLine(pendingTask.assignees, (id) => resolveUser(id));
                   })()}
                 </Descriptions.Item>
                 <Descriptions.Item label="下一个审批人">
-                  {(() => {
-                    const def = workflowInstance?.definition;
-                    const currentNodeId = workflowInstance.currentNodeId;
-                    if (!currentNodeId || !def) return "-";
-                    try {
-                      const edges: any[] = def.edges || [];
-                      const nextEdge = edges.find((e) => e.source === currentNodeId || e.sourceId === currentNodeId);
-                      if (!nextEdge) return "流程结束";
-                      const nextNodeId = nextEdge.target || nextEdge.targetId;
-                      const nodes: any[] = def.nodes || [];
-                      const nextNode = nodes.find((n) => (n.nodeId === nextNodeId || n.id === nextNodeId) && (n.type === "approval" || n.type === "task"));
-                      if (!nextNode) return "-";
-                      const assignees = nextNode.assignees?.values || [];
-                      if (!assignees.length) return "未指定";
-                      const names = assignees.map((id: any) => resolveUser(id)).filter(Boolean);
-                      return names.join("、") || "未指定";
-                    } catch {
-                      return "-";
-                    }
-                  })()}
+                  {describeNextHumanAfterCurrent(workflowInstance, (id) => resolveUser(id))}
                 </Descriptions.Item>
               </Descriptions>
 
@@ -370,7 +354,7 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
                 <Button
                   type="primary"
                   icon={<CheckOutlined />}
-                  loading={actionMutation.isLoading}
+                  loading={pendingWorkflowAction === "approve"}
                   onClick={() => actionMutation.mutate({ action: "approve" })}
                 >
                   同意
@@ -378,14 +362,14 @@ export const FormDataDetail = ({ recordId, onBack }: FormDataDetailProps) => {
                 <Button
                   danger
                   icon={<CloseOutlined />}
-                  loading={actionMutation.isLoading}
+                  loading={pendingWorkflowAction === "reject"}
                   onClick={() => actionMutation.mutate({ action: "reject" })}
                 >
                   拒绝
                 </Button>
                 <Button
                   icon={<RollbackOutlined />}
-                  loading={actionMutation.isLoading}
+                  loading={pendingWorkflowAction === "return"}
                   onClick={() => actionMutation.mutate({ action: "return" })}
                 >
                   退回

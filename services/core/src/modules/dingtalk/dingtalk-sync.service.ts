@@ -179,19 +179,24 @@ export class DingtalkSyncService {
 
             // 处理父部门
             let parentId: string | undefined = undefined;
-            if (dtDept.parent_id && dtDept.parent_id !== 1 && dtDept.parent_id !== 0) {
+            if (dtDept.parent_id && dtDept.parent_id !== 0) {
               const parentDingTalkId = String(dtDept.parent_id);
-              const parentSystemId = deptIdMap.get(parentDingTalkId);
-              if (parentSystemId) {
-                parentId = parentSystemId;
+              // 子部门 parent_id=1 时，应挂到公司主体（dingtalk_1），不能保持空父级
+              if (parentDingTalkId === dingTalkDeptId) {
+                parentId = undefined;
               } else {
-                const parentCode = `dingtalk_${parentDingTalkId}`;
-                const parentDept = await this.departmentRepository.findOne({
-                  where: { code: parentCode },
-                });
-                if (parentDept) {
-                  parentId = parentDept.id;
-                  deptIdMap.set(parentDingTalkId, parentDept.id);
+                const parentSystemId = deptIdMap.get(parentDingTalkId);
+                if (parentSystemId) {
+                  parentId = parentSystemId;
+                } else {
+                  const parentCode = `dingtalk_${parentDingTalkId}`;
+                  const parentDept = await this.departmentRepository.findOne({
+                    where: { code: parentCode },
+                  });
+                  if (parentDept) {
+                    parentId = parentDept.id;
+                    deptIdMap.set(parentDingTalkId, parentDept.id);
+                  }
                 }
               }
             }
@@ -258,6 +263,10 @@ export class DingtalkSyncService {
             continue;
           }
 
+          // 兜底：lists 接口有时不会带 manager_userid / is_admin / is_boss
+          // 缺失时补拉 user/get，保证「发起人直属上级」可解析出具体领导
+          let mergedUser: DingtalkUser = dtUser;
+
           // 查找现有用户（通过钉钉用户ID或手机号）
           let systemUser = await this.userRepository.findOne({
             where: { account: `dingtalk_${dtUser.userid}` },
@@ -279,8 +288,52 @@ export class DingtalkSyncService {
 
           if (!systemUser) {
             // 创建新用户
+            const needUserDetail =
+              !(dtUser as DingtalkUser).manager_userid &&
+              (dtUser as DingtalkUser).is_admin == null &&
+              (dtUser as DingtalkUser).is_boss == null;
+            if (needUserDetail) {
+              try {
+                const detail = await this.dingtalkService.getUserById(appKey, appSecret, String(dtUser.userid));
+                if (detail) mergedUser = { ...dtUser, ...detail };
+              } catch (e) {
+                // ignore: 不阻塞整个同步
+              }
+            }
+
             const unionId =
-              (dtUser as any).unionid || (dtUser as any).unionId || undefined;
+              (mergedUser as any).unionid || (mergedUser as any).unionId || undefined;
+            const managerUserId = mergedUser.manager_userid
+              ? String(mergedUser.manager_userid)
+              : undefined;
+            const isAdmin =
+              mergedUser.is_admin === true ||
+              (mergedUser as any).isAdmin === true ||
+              (mergedUser as any).admin === true;
+            const isBoss =
+              mergedUser.is_boss === true ||
+              (mergedUser as any).isBoss === true ||
+              (mergedUser as any).boss === true;
+            const isLeader = isAdmin || isBoss;
+            const deptIds = Array.isArray(mergedUser.dept_id_list)
+              ? mergedUser.dept_id_list.map((x) => String(x))
+              : [];
+            const leaderInDept = Array.isArray((mergedUser as any).leader_in_dept)
+              ? (mergedUser as any).leader_in_dept.map((x: any) => {
+                  const deptId = String(x?.dept_id ?? '');
+                  const deptSystemId = deptId ? deptIdMap.get(deptId) : undefined;
+                  return {
+                    deptId,
+                    ...(deptSystemId ? { deptSystemId } : {}),
+                    leader: Boolean(x?.leader),
+                  };
+                })
+              : [];
+            // 重新确认部门（兜底：如果列表接口没带 dept_id_list，但 user/get 带了，就用新信息覆盖）
+            if (deptIds.length) {
+              const mapped = deptIdMap.get(deptIds[0]);
+              if (mapped) departmentId = mapped;
+            }
             if (unionId && Math.random() < 0.02) {
               const head = String(unionId).slice(0, 4);
               const tail = String(unionId).slice(-4);
@@ -289,19 +342,33 @@ export class DingtalkSyncService {
             await this.tenantLimitsService.assertCanEnableUser(tenant.id, 0);
             const newUser = this.userRepository.create({
               account: `dingtalk_${dtUser.userid}`,
-              name: dtUser.name || `钉钉用户_${dtUser.userid}`,
-              email: dtUser.email || `${dtUser.userid}@dingtalk.local`,
-              phone: dtUser.mobile || null,
+              name: mergedUser.name || `钉钉用户_${dtUser.userid}`,
+              email: mergedUser.email || `${dtUser.userid}@dingtalk.local`,
+              phone: mergedUser.mobile || null,
               passwordHash: defaultPasswordHash,
               tenantId: tenant.id,
               status: 1,
-              avatar: dtUser.avatar || null,
-              position: dtUser.position || null,
-              jobNumber: dtUser.jobnumber || null,
+              avatar: mergedUser.avatar || null,
+              position: mergedUser.position || null,
+              jobNumber: mergedUser.jobnumber || null,
               departmentId,
               metadata: {
                 dingtalkUserId: dtUser.userid,
                 dingtalkUnionId: unionId,
+                ...(managerUserId ? { dingtalkManagerUserId: managerUserId } : {}),
+                ...(managerUserId ? { managerUserId, leaderUserId: managerUserId } : {}),
+                isLeader,
+                isAdmin,
+                isBoss,
+                ...(leaderInDept.length ? { dingtalkLeaderInDept: leaderInDept } : {}),
+                ...(deptIds.length
+                  ? {
+                      dingtalkDeptIds: deptIds,
+                      departmentIds: deptIds,
+                      deptIds,
+                      dingtalkDeptId: deptIds[0],
+                    }
+                  : {}),
                 syncedAt: new Date().toISOString(),
               },
             } as Partial<UserEntity>);
@@ -321,19 +388,76 @@ export class DingtalkSyncService {
               return {};
             };
 
+            const needUserDetail =
+              !(dtUser as DingtalkUser).manager_userid &&
+              (dtUser as DingtalkUser).is_admin == null &&
+              (dtUser as DingtalkUser).is_boss == null;
+            if (needUserDetail) {
+              try {
+                const detail = await this.dingtalkService.getUserById(appKey, appSecret, String(dtUser.userid));
+                if (detail) mergedUser = { ...dtUser, ...detail };
+              } catch (e) {
+                // ignore
+              }
+            }
+
             // 更新现有用户
-            systemUser.name = dtUser.name || systemUser.name;
-            systemUser.phone = dtUser.mobile || systemUser.phone;
-            systemUser.email = dtUser.email || systemUser.email;
-            systemUser.avatar = dtUser.avatar || systemUser.avatar;
-            systemUser.position = dtUser.position || systemUser.position;
-            systemUser.jobNumber = dtUser.jobnumber || systemUser.jobNumber;
-            systemUser.departmentId = departmentId || systemUser.departmentId;
+            systemUser.name = mergedUser.name || systemUser.name;
+            systemUser.phone = mergedUser.mobile || systemUser.phone;
+            systemUser.email = mergedUser.email || systemUser.email;
+            systemUser.avatar = mergedUser.avatar || systemUser.avatar;
+            systemUser.position = mergedUser.position || systemUser.position;
+            systemUser.jobNumber = mergedUser.jobnumber || systemUser.jobNumber;
+            const deptIds = Array.isArray(mergedUser.dept_id_list)
+              ? mergedUser.dept_id_list.map((x) => String(x))
+              : [];
+            if (deptIds.length) {
+              const mapped = deptIdMap.get(deptIds[0]);
+              systemUser.departmentId = mapped || departmentId || systemUser.departmentId;
+            } else {
+              systemUser.departmentId = departmentId || systemUser.departmentId;
+            }
             systemUser.tenantId = tenant.id; // 确保租户ID正确
+            const mgr = mergedUser.manager_userid ? String(mergedUser.manager_userid) : undefined;
+            const isAdmin =
+              mergedUser.is_admin === true ||
+              (mergedUser as any).isAdmin === true ||
+              (mergedUser as any).admin === true;
+            const isBoss =
+              mergedUser.is_boss === true ||
+              (mergedUser as any).isBoss === true ||
+              (mergedUser as any).boss === true;
+            const isLeader = isAdmin || isBoss;
+            const leaderInDept = Array.isArray((mergedUser as any).leader_in_dept)
+              ? (mergedUser as any).leader_in_dept.map((x: any) => {
+                  const deptId = String(x?.dept_id ?? '');
+                  const deptSystemId = deptId ? deptIdMap.get(deptId) : undefined;
+                  return {
+                    deptId,
+                    ...(deptSystemId ? { deptSystemId } : {}),
+                    leader: Boolean(x?.leader),
+                  };
+                })
+              : [];
             systemUser.metadata = {
               ...parseUserMetadata(systemUser.metadata),
               dingtalkUserId: dtUser.userid,
-              dingtalkUnionId: (dtUser as any).unionid || (dtUser as any).unionId || (systemUser.metadata as any)?.dingtalkUnionId,
+              dingtalkUnionId:
+                (mergedUser as any).unionid || (mergedUser as any).unionId || (systemUser.metadata as any)?.dingtalkUnionId,
+              ...(mgr ? { dingtalkManagerUserId: mgr } : {}),
+              ...(mgr ? { managerUserId: mgr, leaderUserId: mgr } : {}),
+              isLeader,
+              isAdmin,
+              isBoss,
+              ...(leaderInDept.length ? { dingtalkLeaderInDept: leaderInDept } : {}),
+              ...(deptIds.length
+                ? {
+                    dingtalkDeptIds: deptIds,
+                    departmentIds: deptIds,
+                    deptIds,
+                    dingtalkDeptId: deptIds[0],
+                  }
+                : {}),
               syncedAt: new Date().toISOString(),
             };
             await this.userRepository.save(systemUser);

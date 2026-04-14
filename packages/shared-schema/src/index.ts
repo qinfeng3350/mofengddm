@@ -89,6 +89,16 @@ export const FormFieldSchema: z.ZodType<any> = z.lazy(() => z.object({
   relatedFormField: z.string().optional(), // 关联的表单字段ID（保留兼容）
   relatedDisplayField: z.string().optional(), // 用于展示的关联表单字段ID
   enableDataFilter: z.boolean().optional(), // 是否启用数据筛选
+  /** 关联表单可选数据范围（关联表字段条件）；值支持 `{当前表单fieldId}` 动态引用 */
+  relatedDataFilterConditions: z
+    .array(
+      z.object({
+        fieldId: z.string(),
+        operator: z.string(),
+        value: z.string(),
+      }),
+    )
+    .optional(),
   enableDataFill: z.boolean().optional(), // 是否启用数据填充
   allowCreateRelated: z.boolean().optional(), // 是否允许在选择时新增关联数据
   fieldMapping: z.record(z.string()).optional(), // 字段映射：{关联表单字段ID: 当前表单字段ID}

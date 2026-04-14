@@ -31,7 +31,7 @@ import {
   CaretUpOutlined,
   CaretDownOutlined,
   MoreOutlined,
-  LinkOutlined,
+  FileTextOutlined,
 } from "@ant-design/icons";
 import type { FormFieldSchema } from "@mofeng/shared-schema";
 import dayjs from "dayjs";
@@ -914,7 +914,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
               const [currentPage, setCurrentPage] = useState(1);
               const [pageSize, setPageSize] = useState(10);
-              const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+              const [columnWidths] = useState<Record<string, number>>({});
               const isCellDisabled = (sf: any) => isDisabled || sf?.editable === false || sf?.type === "formula";
 
               // 子表公式计算与写回：禁止在 cell render 阶段调用 formField.onChange，
@@ -1053,13 +1053,16 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
 
               const SubtableRelatedCell: React.FC<{
                 value: any;
-                onChange: (val: any, extra?: Record<string, unknown>) => void;
+                onChange: (
+                  val: any,
+                  extra?: Record<string, unknown>,
+                  selectedRecords?: FormDataResponse[],
+                ) => void;
                 subField: any;
                 disabled?: boolean;
                 currentRow?: Record<string, unknown>;
               }> = ({ value, onChange, subField, disabled, currentRow }) => {
                 const [selectorVisible, setSelectorVisible] = useState(false);
-                const multiple = subField.type === "relatedFormMulti";
                 const extractRecordId = (raw: any): string | undefined => {
                   if (raw == null) return undefined;
                   if (typeof raw === "string" || typeof raw === "number") {
@@ -1095,25 +1098,22 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   enabled: !!subField.relatedFormId,
                 });
 
-                // 已选记录（单选）
-                const selectedRecordId = !multiple ? extractRecordId(value) : undefined;
-                const selectedIds = multiple ? extractRecordIds(value) : [];
+                // 子表弹窗可能存多条 recordId（数组），与字段类型是否为 relatedFormMulti 无关
+                const selectedIds = extractRecordIds(value);
+                const selectedRecordId = selectedIds.length === 1 ? selectedIds[0] : undefined;
 
                 const { data: selectedRecord } = useQuery({
                   queryKey: ["formData", selectedRecordId],
                   queryFn: () => formDataApi.getById(selectedRecordId!),
-                  enabled: !!selectedRecordId && !multiple,
+                  enabled: !!selectedRecordId && selectedIds.length <= 1,
                 });
 
                 const displayText = useMemo(() => {
-                  if (multiple) {
-                    if (!selectedIds || selectedIds.length === 0) {
-                      return subField.placeholder || "点击选择关联表单数据（可多选）";
-                    }
+                  if (selectedIds.length > 1) {
                     return `已选择 ${selectedIds.length} 条记录`;
                   }
-                  if (!selectedRecordId) {
-                    return subField.placeholder || "点击选择关联表单数据";
+                  if (selectedIds.length === 0) {
+                    return subField.placeholder || "请选择";
                   }
                   if (selectedRecord && relatedFormDefinition) {
                     const displayFieldId = subField.relatedDisplayField;
@@ -1156,28 +1156,35 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   }
                   // 兜底：即使详情查询失败，也要显示已选ID，避免看起来像“未选择”
                   return selectedRecordId;
-                }, [multiple, selectedIds, selectedRecordId, selectedRecord, subField, relatedFormDefinition]);
+                }, [selectedIds, selectedRecordId, selectedRecord, subField, relatedFormDefinition]);
 
                 const handleSelect = (record: FormDataResponse | FormDataResponse[]) => {
-                  if (multiple) {
+                  // 子表里弹窗已强制 multiple：返回数组时必须走多选分支，不能依赖字段类型（可能是 relatedForm）
+                  if (Array.isArray(record)) {
                     const records = record as FormDataResponse[];
+                    if (records.length === 0) {
+                      message.warning("请至少选择一条记录");
+                      return;
+                    }
                     const recordIds = records.map((r) => r.recordId);
+                    const firstRecord = records[0];
                     const updates: Record<string, unknown> = {};
 
-                    if (subField.fieldMapping) {
-                      records.forEach((r) => {
-                        Object.entries(subField.fieldMapping || {}).forEach(([relatedFieldId, currentFieldId]) => {
-                          const val = (r.data || {})[relatedFieldId];
-                          if (val !== undefined && currentFieldId) {
-                            updates[currentFieldId] = val;
-                          }
-                        });
+                    if (firstRecord && subField.fieldMapping) {
+                      Object.entries(subField.fieldMapping || {}).forEach(([relatedFieldId, currentFieldId]) => {
+                        const val = (firstRecord.data || {})[relatedFieldId];
+                        if (val !== undefined && currentFieldId) {
+                          updates[currentFieldId] = val;
+                        }
                       });
                     }
 
-                    onChange(recordIds, updates);
+                    onChange(recordIds, updates, records);
                     message.success(`已选择 ${records.length} 条记录`);
-                  } else {
+                    return;
+                  }
+
+                  {
                     const single = record as FormDataResponse;
                     const updates: Record<string, unknown> = {};
                     if (subField.fieldMapping) {
@@ -1197,15 +1204,21 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   <>
                     <Input
                       value={displayText}
-                      placeholder={subField.placeholder || "点击选择关联表单数据"}
+                      placeholder={subField.placeholder || "请选择"}
                       disabled={disabled || !subField.relatedFormId}
                       readOnly
                       size="small"
                       suffix={
                         <Button
-                          type="link"
+                          type="text"
                           size="small"
-                          icon={<LinkOutlined />}
+                          icon={<FileTextOutlined />}
+                          style={{
+                            color: "#8c8c8c",
+                            paddingInline: 4,
+                            minWidth: 24,
+                            height: 24,
+                          }}
                           onClick={() => {
                             if (!subField.relatedFormId) {
                               message.warning("请先配置关联表单");
@@ -1214,9 +1227,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             setSelectorVisible(true);
                           }}
                           disabled={disabled || !subField.relatedFormId}
-                        >
-                          选择
-                        </Button>
+                        />
                       }
                     />
                     {subField.relatedFormId && (
@@ -1225,8 +1236,11 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                         onClose={() => setSelectorVisible(false)}
                         onSelect={handleSelect}
                         relatedFormId={subField.relatedFormId}
-                        multiple={multiple}
+                        multiple
                         currentFormSchema={formSchema}
+                        dataFilterEnabled={subField.enableDataFilter === true}
+                        dataFilterConditions={subField.relatedDataFilterConditions}
+                        runtimeFormValues={formValues as Record<string, unknown>}
                       />
                     )}
                   </>
@@ -1269,51 +1283,10 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   },
                 },
                 ...subtableFields.map((subField: any) => ({
-                  title: (
-                    <Space size={6}>
-                      <span>{subField.label}</span>
-                      <Button
-                        type="text"
-                        size="small"
-                        style={{ padding: 0, minWidth: 18, height: 18, lineHeight: "18px" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnWidths((prev) => ({
-                            ...prev,
-                            [subField.fieldId]: Math.max(120, (prev[subField.fieldId] || 180) - 20),
-                          }));
-                        }}
-                      >
-                        -
-                      </Button>
-                      <Button
-                        type="text"
-                        size="small"
-                        style={{ padding: 0, minWidth: 18, height: 18, lineHeight: "18px" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnWidths((prev) => ({
-                            ...prev,
-                            [subField.fieldId]: Math.min(560, (prev[subField.fieldId] || 180) + 20),
-                          }));
-                        }}
-                      >
-                        +
-                      </Button>
-                    </Space>
-                  ),
+                  title: <span>{subField.label}</span>,
                   dataIndex: subField.fieldId,
                   key: subField.fieldId,
                   width: columnWidths[subField.fieldId] || 180,
-                  sorter:
-                    subField.type === "number"
-                      ? (a: any, b: any) =>
-                          Number(a?.[subField.fieldId] ?? 0) - Number(b?.[subField.fieldId] ?? 0)
-                      : (a: any, b: any) =>
-                          String(a?.[subField.fieldId] ?? "").localeCompare(
-                            String(b?.[subField.fieldId] ?? ""),
-                            "zh-CN",
-                          ),
                   render: (text: any, record: any, index: number) => {
                     let effectiveText = text;
 
@@ -1520,16 +1493,63 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             subField={subField}
                             disabled={isCellDisabled(subField)}
                             currentRow={currentRow}
-                            onChange={(val, extraUpdates) => {
+                            onChange={(val, extraUpdates, selectedRecords) => {
                               const newData = [...dataSource];
-                              if (!newData[actualIndex]) newData[actualIndex] = {};
-                              newData[actualIndex][subField.fieldId] = val;
-                              if (extraUpdates && typeof extraUpdates === "object") {
-                                Object.entries(extraUpdates).forEach(([k, v]) => {
-                                  newData[actualIndex][k] = v;
-                                });
+                              const ensureBaseRow = () => {
+                                if (!newData[actualIndex]) newData[actualIndex] = {};
+                                return { ...(newData[actualIndex] || {}) };
+                              };
+
+                              const buildMappedRow = (
+                                recordItem: FormDataResponse,
+                                rawValue: any,
+                              ) => {
+                                const row: Record<string, unknown> = {
+                                  ...ensureBaseRow(),
+                                  [subField.fieldId]: rawValue,
+                                };
+                                if (subField.fieldMapping) {
+                                  Object.entries(subField.fieldMapping || {}).forEach(
+                                    ([relatedFieldId, currentFieldId]) => {
+                                      const mappedValue = (recordItem.data || {})[relatedFieldId];
+                                      if (mappedValue !== undefined && currentFieldId) {
+                                        row[currentFieldId] = mappedValue;
+                                      }
+                                    },
+                                  );
+                                }
+                                return row;
+                              };
+
+                              // 子表弹窗多选时一定带 selectedRecords；与字段类型无关（可能是 relatedForm）
+                              if (Array.isArray(selectedRecords) && selectedRecords.length > 0) {
+                                const expandedRows = selectedRecords.map((recordItem) =>
+                                  buildMappedRow(recordItem, recordItem.recordId),
+                                );
+                                newData[actualIndex] = expandedRows[0];
+                                if (expandedRows.length > 1) {
+                                  newData.splice(actualIndex + 1, 0, ...expandedRows.slice(1));
+                                }
+                              } else {
+                                if (!newData[actualIndex]) newData[actualIndex] = {};
+                                newData[actualIndex][subField.fieldId] = val;
+                                if (extraUpdates && typeof extraUpdates === "object") {
+                                  Object.entries(extraUpdates).forEach(([k, v]) => {
+                                    newData[actualIndex][k] = v;
+                                  });
+                                }
                               }
                               formField.onChange(newData);
+                              if (Array.isArray(selectedRecords) && selectedRecords.length > 0) {
+                                const nextTotal = newData.length;
+                                const maxPage = Math.ceil(nextTotal / pageSize) || 1;
+                                if (currentPage > maxPage) {
+                                  setCurrentPage(maxPage);
+                                }
+                                setSelectedRowKeys((prev) =>
+                                  prev.filter((key) => key >= 0 && key < newData.length),
+                                );
+                              }
                             }}
                           />
                         );
@@ -1626,7 +1646,15 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   help={fieldState.error?.message}
                   style={{ marginBottom: 24 }}
                 >
-                  <div style={{ border: "1px solid #d9d9d9", borderRadius: 4, background: "#fff", overflow: "hidden" }}>
+                  <div
+                    style={{
+                      border: "1px solid #e6eaf2",
+                      borderRadius: 10,
+                      background: "#fff",
+                      overflow: "hidden",
+                      boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
+                    }}
+                  >
                     {subtableFields.length > 0 ? (
                       <>
                         {/* 标题栏 */}
@@ -1638,7 +1666,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             padding: "12px 16px",
                             borderBottom: "1px solid #f0f0f0",
                             cursor: "pointer",
-                            background: "#fafafa",
+                            background: "#f8fafc",
                           }}
                           onClick={() => setExpanded(!expanded)}
                         >
@@ -1656,11 +1684,12 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "space-between",
-                                padding: "12px 16px",
-                                borderBottom: "1px solid #f0f0f0",
+                                padding: "10px 14px",
+                                borderBottom: "1px solid #eef2f7",
+                                background: "#fcfdff",
                               }}
                             >
-                              <Space>
+                              <Space size={10}>
                                 <Button
                                   type="primary"
                                   size="small"
@@ -1670,6 +1699,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     handleAddRow();
                                   }}
                                   disabled={isDisabled}
+                                  style={{ borderRadius: 6 }}
                                 >
                                   新增
                                 </Button>
@@ -1681,6 +1711,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     handleImport();
                                   }}
                                   disabled={isDisabled}
+                                  style={{ borderRadius: 6 }}
                                 >
                                   导入
                                 </Button>
@@ -1693,6 +1724,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     handleDeleteRows();
                                   }}
                                   disabled={isDisabled || selectedRowKeys.length === 0}
+                                  style={{ borderRadius: 6 }}
                                 >
                                   删除
                                 </Button>
@@ -1705,7 +1737,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                   }}
                                   trigger={["click"]}
                                 >
-                                  <Button size="small">选择筛选字段</Button>
+                                  <Button size="small" style={{ borderRadius: 6 }}>选择筛选字段</Button>
                                 </Dropdown>
                               </Space>
                             </div>
@@ -1718,7 +1750,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     dataSource={paginatedData}
                                     columns={columns}
                                     pagination={false}
-                                    size="small"
+                                    size="middle"
                                     rowKey={(_, index) => `row-${startIndex + index}`}
                                     style={{ margin: 0 }}
                                     bordered
@@ -1731,6 +1763,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                         background: (index || 0) % 2 === 0 ? "#ffffff" : "#fafcff",
                                       },
                                     })}
+                                    scroll={{ x: "max-content" }}
                                   />
                                 </div>
                                 {/* 底部信息栏 */}
@@ -1740,8 +1773,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     alignItems: "center",
                                     justifyContent: "space-between",
                                     padding: "12px 16px",
-                                    borderTop: "1px solid #f0f0f0",
-                                    background: "#fafafa",
+                                    borderTop: "1px solid #eef2f7",
+                                    background: "#f8fafc",
                                   }}
                                 >
                                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -1994,8 +2027,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               (Array.isArray(selectedRecordIds) && selectedRecordIds.length === 0)
             ) {
               return multiple
-                ? field.placeholder || "点击选择关联表单数据（可多选）"
-                : field.placeholder || "点击选择关联表单数据";
+                ? field.placeholder || "请选择"
+                : field.placeholder || "请选择";
             }
 
             if (multiple) {
@@ -2003,11 +2036,11 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               if (ids && ids.length > 0) {
                 return `已选择 ${ids.length} 条记录`;
               }
-              return field.placeholder || "点击选择关联表单数据（可多选）";
+              return field.placeholder || "请选择";
             } else {
               // 如果没有选中的记录ID，返回占位文本
               if (!selectedRecordId) {
-                return field.placeholder || "点击选择关联表单数据";
+                return field.placeholder || "请选择";
               }
 
               if (selectedRecord) {
@@ -2089,28 +2122,21 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                     <Input
                       {...formField}
                       value={getDisplayText()}
-                      placeholder={field.placeholder || "点击选择关联表单数据"}
+                      placeholder={field.placeholder || "请选择"}
                       disabled={isDisabled || !field.relatedFormId}
                       readOnly
                       suffix={
-                        <Space size={4}>
-                          {currentValue && !multiple && (
-                            <Button
-                              type="link"
-                              size="small"
-                              onClick={() => {
-                                // 清空已选
-                                setValue(field.fieldId, undefined);
-                              }}
-                              disabled={isDisabled}
-                            >
-                              清空
-                            </Button>
-                          )}
+                        <Space size={2}>
                           <Button
-                            type="link"
-                            icon={<LinkOutlined />}
+                            type="text"
+                            icon={<FileTextOutlined />}
                             size="small"
+                            style={{
+                              color: "#8c8c8c",
+                              paddingInline: 4,
+                              minWidth: 24,
+                              height: 24,
+                            }}
                             onClick={() => {
                               if (!field.relatedFormId) {
                                 message.warning("请先在属性面板中配置关联表单");
@@ -2119,9 +2145,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                               setSelectorVisible(true);
                             }}
                             disabled={isDisabled || !field.relatedFormId}
-                          >
-                            选择
-                          </Button>
+                          />
                         </Space>
                       }
                     />
@@ -2142,6 +2166,9 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   multiple={multiple}
                   currentFormSchema={formSchema}
                   onFieldMapping={handleFieldMapping}
+                  dataFilterEnabled={field.enableDataFilter === true}
+                  dataFilterConditions={field.relatedDataFilterConditions}
+                  runtimeFormValues={formValues as Record<string, unknown>}
                 />
               )}
             </>

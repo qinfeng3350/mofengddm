@@ -4,6 +4,13 @@ export const workflowApi = {
   startInstance: async (payload: { formId: string; recordId: string; workflow: any }) => {
     return apiClient.post('/workflows/start', payload);
   },
+  previewAssignees: async (payload: {
+    workflow: any;
+    data?: Record<string, unknown>;
+    initiatorDeptId?: string;
+  }) => {
+    return apiClient.post('/workflows/preview-assignees', payload);
+  },
   getInstanceByRecord: async (recordId: string) => {
     return apiClient.get(`/workflows/instances/by-record/${recordId}`);
   },

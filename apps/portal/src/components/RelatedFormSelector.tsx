@@ -1,10 +1,79 @@
 import { useState, useEffect, useMemo } from "react";
-import { Modal, Table, Input, Button, Space, message, Tag, Empty, Pagination } from "antd";
+import { Modal, Table, Input, Button, Space, message, Tag, Empty, Pagination, Alert } from "antd";
 import { SearchOutlined, CheckOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { formDefinitionApi, type FormDefinitionResponse } from "@/api/formDefinition";
 import { formDataApi, type FormDataResponse } from "@/api/formData";
 import type { FormSchemaType } from "@mofeng/shared-schema";
+
+export type RelatedDataFilterCondition = {
+  fieldId: string;
+  operator: string;
+  value: string;
+};
+
+function resolveFilterValue(raw: string, formValues?: Record<string, unknown>): string {
+  const s = String(raw ?? "").trim();
+  const m = s.match(/^\{([^{}]+)\}$/);
+  if (m && formValues) {
+    const key = m[1].trim();
+    const v = formValues[key];
+    if (v === null || v === undefined) return "";
+    if (Array.isArray(v)) return v.map(String).join(",");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  }
+  return s;
+}
+
+/** 按设计器「数据筛选」条件过滤关联表记录（比对关联表 data[fieldId]） */
+export function recordMatchesRelatedDataFilter(
+  recordData: Record<string, unknown>,
+  conditions: RelatedDataFilterCondition[] | undefined,
+  runtimeFormValues?: Record<string, unknown>,
+): boolean {
+  if (!conditions?.length) return true;
+
+  const normalize = (v: unknown) => {
+    if (v === null || v === undefined) return "";
+    if (Array.isArray(v)) return v.join(",");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  };
+
+  const toNumber = (v: unknown) => {
+    const n = typeof v === "number" ? v : Number(String(v).trim());
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  return conditions.every((cond) => {
+    if (!String(cond.fieldId || "").trim()) return true;
+    const raw = recordData[cond.fieldId];
+    const condVal = resolveFilterValue(cond.value, runtimeFormValues).trim();
+    if (!condVal) return true;
+
+    switch (cond.operator) {
+      case "eq":
+        return normalize(raw) === condVal;
+      case "ne":
+        return normalize(raw) !== condVal;
+      case "gt":
+        return toNumber(raw) > toNumber(condVal);
+      case "gte":
+        return toNumber(raw) >= toNumber(condVal);
+      case "lt":
+        return toNumber(raw) < toNumber(condVal);
+      case "lte":
+        return toNumber(raw) <= toNumber(condVal);
+      case "contains":
+        return normalize(raw).includes(condVal);
+      case "notContains":
+        return !normalize(raw).includes(condVal);
+      default:
+        return true;
+    }
+  });
+}
 
 interface RelatedFormSelectorProps {
   open: boolean;
@@ -14,6 +83,11 @@ interface RelatedFormSelectorProps {
   multiple?: boolean;
   currentFormSchema?: FormSchemaType; // 当前表单的 schema，用于字段映射
   onFieldMapping?: (mapping: Record<string, string>) => void; // 字段映射回调
+  /** 设计器「数据筛选」开关 */
+  dataFilterEnabled?: boolean;
+  dataFilterConditions?: RelatedDataFilterCondition[];
+  /** 当前表单值：用于解析条件值里的 `{fieldId}` */
+  runtimeFormValues?: Record<string, unknown>;
 }
 
 export const RelatedFormSelector = ({
@@ -24,6 +98,9 @@ export const RelatedFormSelector = ({
   multiple = false,
   currentFormSchema,
   onFieldMapping,
+  dataFilterEnabled = false,
+  dataFilterConditions,
+  runtimeFormValues,
 }: RelatedFormSelectorProps) => {
   const [searchText, setSearchText] = useState("");
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
@@ -113,7 +190,7 @@ export const RelatedFormSelector = ({
         message.warning("请至少选择一条记录");
         return;
       }
-      // 多选模式：返回选中的记录数组
+      // 多选模式：返回选中的记录数组（从全量列表取，避免与分页/筛选数据源不一致）
       const selectedRecords = formDataList?.filter((item) =>
         selectedRowKeys.includes(item.recordId)
       ) || [];
@@ -224,11 +301,22 @@ export const RelatedFormSelector = ({
   });
 
   const filteredData = useMemo(() => {
-    const list = formDataList || [];
-    if (!searchText) return list;
-    const kw = searchText.toLowerCase();
-    return list.filter((item) => JSON.stringify(item.data || {}).toLowerCase().includes(kw));
-  }, [formDataList, searchText]);
+    let list = formDataList || [];
+    if (searchText) {
+      const kw = searchText.toLowerCase();
+      list = list.filter((item) => JSON.stringify(item.data || {}).toLowerCase().includes(kw));
+    }
+    if (dataFilterEnabled && dataFilterConditions?.length) {
+      list = list.filter((item) =>
+        recordMatchesRelatedDataFilter(
+          (item.data || {}) as Record<string, unknown>,
+          dataFilterConditions,
+          runtimeFormValues,
+        ),
+      );
+    }
+    return list;
+  }, [formDataList, searchText, dataFilterEnabled, dataFilterConditions, runtimeFormValues]);
 
   const pagedData = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -448,6 +536,14 @@ export const RelatedFormSelector = ({
               allowClear
               style={{ width: 300 }}
             />
+            {dataFilterEnabled && (dataFilterConditions?.length || 0) > 0 ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 12 }}
+                message={`已按设计器配置过滤可选数据（${dataFilterConditions!.length} 条条件）`}
+              />
+            ) : null}
           </div>
 
           {dataLoading ? (

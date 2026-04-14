@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Modal, Input, Tree, Space, Typography, Button } from "antd";
 import { ApartmentOutlined, SearchOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
@@ -7,6 +7,31 @@ import { departmentApi, type Department as ApiDepartment } from "@/api/departmen
 const { Text } = Typography;
 
 type Department = ApiDepartment;
+
+const ensureDepartmentTree = (input: Department[]): Department[] => {
+  const list = Array.isArray(input) ? input : [];
+  if (!list.length) return [];
+  // 如果已经是树结构，直接用
+  if (list.some((x: any) => Array.isArray(x?.children) && x.children.length > 0)) {
+    return list;
+  }
+  // 平铺转树
+  const byId = new Map<string, any>();
+  const roots: any[] = [];
+  list.forEach((d: any) => {
+    if (!d?.id) return;
+    byId.set(String(d.id), { ...d, id: String(d.id), children: [] });
+  });
+  byId.forEach((node) => {
+    const pid = node.parentId != null ? String(node.parentId) : "";
+    if (pid && byId.has(pid) && pid !== String(node.id)) {
+      byId.get(pid).children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+  return roots;
+};
 
 interface DepartmentSelectorProps {
   value?: string | string[];
@@ -36,12 +61,29 @@ export const DepartmentSelector = ({
     },
   });
 
-  // 构建树形结构
-  const treeData = departments; // 已为树形
+  const flattenDepartments = (nodes: Department[]): Department[] => {
+    const out: Department[] = [];
+    const walk = (items: Department[]) => {
+      (items || []).forEach((d) => {
+        out.push(d);
+        if (Array.isArray(d.children) && d.children.length > 0) {
+          walk(d.children as Department[]);
+        }
+      });
+    };
+    walk(nodes || []);
+    return out;
+  };
 
-  const selectedDepts = Array.isArray(value) 
-    ? departments.filter(d => value.includes(d.id))
-    : departments.filter(d => d.id === value);
+  const treeData = useMemo(() => ensureDepartmentTree(departments), [departments]);
+  const allDepartments = useMemo(() => flattenDepartments(treeData), [treeData]);
+
+  const selectedDepts = useMemo(() => {
+    if (Array.isArray(value)) {
+      return allDepartments.filter((d) => value.includes(d.id));
+    }
+    return allDepartments.filter((d) => d.id === value);
+  }, [value, allDepartments]);
 
   const handleSelect = (dept: Department) => {
     if (multiple) {
@@ -64,9 +106,53 @@ export const DepartmentSelector = ({
     }
   };
 
-  const filteredTreeData = searchText
-    ? treeData.filter(dept => dept.name.includes(searchText))
-    : treeData;
+  const buildTreeNodes = (nodes: Department[]): any[] =>
+    (nodes || []).map((dept) => ({
+      title: (
+        <div
+          onClick={() => handleSelect(dept)}
+          style={{
+            cursor: "pointer",
+            padding: "4px 0",
+          }}
+        >
+          <Space>
+            <ApartmentOutlined />
+            <Text>{dept.name}</Text>
+            {(multiple
+              ? Array.isArray(value) && value.includes(dept.id)
+              : value === dept.id) && <Text type="primary">✓</Text>}
+          </Space>
+        </div>
+      ),
+      key: dept.id,
+      children: buildTreeNodes((dept.children || []) as Department[]),
+    }));
+
+  const filterTree = (nodes: Department[], keyword: string): Department[] => {
+    if (!keyword.trim()) return nodes;
+    const lower = keyword.trim().toLowerCase();
+    const walk = (items: Department[]): Department[] => {
+      const result: Department[] = [];
+      (items || []).forEach((item) => {
+        const children = walk((item.children || []) as Department[]);
+        const hit = String(item.name || "").toLowerCase().includes(lower);
+        if (hit || children.length > 0) {
+          result.push({
+            ...item,
+            children,
+          });
+        }
+      });
+      return result;
+    };
+    return walk(nodes || []);
+  };
+
+  const filteredTreeData = useMemo(
+    () => filterTree(treeData, searchText),
+    [treeData, searchText],
+  );
 
   return (
     <>
@@ -111,46 +197,7 @@ export const DepartmentSelector = ({
         />
         <Tree
           loading={isLoading}
-          treeData={filteredTreeData.map(dept => ({
-            title: (
-              <div
-                onClick={() => handleSelect(dept)}
-                style={{
-                  cursor: "pointer",
-                  padding: "4px 0",
-                }}
-              >
-                <Space>
-                  <ApartmentOutlined />
-                  <Text>{dept.name}</Text>
-                  {(multiple
-                    ? Array.isArray(value) && value.includes(dept.id)
-                    : value === dept.id) && <Text type="primary">✓</Text>}
-                </Space>
-              </div>
-            ),
-            key: dept.id,
-            children: dept.children?.map(child => ({
-              title: (
-                <div
-                  onClick={() => handleSelect(child)}
-                  style={{
-                    cursor: "pointer",
-                    padding: "4px 0",
-                  }}
-                >
-                  <Space>
-                    <ApartmentOutlined />
-                    <Text>{child.name}</Text>
-                    {(multiple
-                      ? Array.isArray(value) && value.includes(child.id)
-                      : value === child.id) && <Text type="primary">✓</Text>}
-                  </Space>
-                </div>
-              ),
-              key: child.id,
-            })),
-          }))}
+          treeData={buildTreeNodes(filteredTreeData)}
           defaultExpandAll
         />
       </Modal>

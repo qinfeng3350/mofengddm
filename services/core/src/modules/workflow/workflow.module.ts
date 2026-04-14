@@ -6,6 +6,9 @@ import {
   FormDataEntity,
   TenantEntity,
   UserEntity,
+  UserRoleEntity,
+  RoleEntity,
+  DepartmentEntity,
 } from '../../database/entities';
 import { WorkflowService } from './workflow.service';
 import { WorkflowController } from './workflow.controller';
@@ -21,6 +24,9 @@ import { EnterpriseLogModule } from '../enterprise-log/enterprise-log.module';
       FormDataEntity,
       TenantEntity,
       UserEntity,
+      UserRoleEntity,
+      RoleEntity,
+      DepartmentEntity,
     ]),
     forwardRef(() => BusinessRuleModule),
     DingtalkModule,

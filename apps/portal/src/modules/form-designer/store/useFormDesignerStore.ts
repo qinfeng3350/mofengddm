@@ -3,6 +3,7 @@ import type { FormSchemaType, FormFieldSchema, LayoutContainerSchemaType } from 
 import { FormSchema, FieldTypeEnum, LayoutContainerTypeEnum } from "@mofeng/shared-schema";
 import { formDefinitionApi } from "../../../api/formDefinition";
 import { applicationApi } from "../../../api/application";
+import { queryClient } from "../../../lib/queryClient";
 
 type DesignerState = {
   formSchema: FormSchemaType;
@@ -427,6 +428,9 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
         } else {
           await formDefinitionApi.update(formSchema.formId, saveData);
         }
+        void queryClient.invalidateQueries({
+          queryKey: ["formDefinition", formSchema.formId],
+        });
       } else {
         // 创建新表单
         if (applicationId) {
@@ -439,6 +443,9 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
               version: response.version,
             },
           });
+          void queryClient.invalidateQueries({
+            queryKey: ["formDefinition", response.formId],
+          });
         } else {
           // 使用默认方式创建（兼容旧代码）
           const response = await formDefinitionApi.create(saveData);
@@ -448,6 +455,9 @@ export const useFormDesignerStore = create<DesignerState>((set, get) => ({
               formId: response.formId,
               version: response.version,
             },
+          });
+          void queryClient.invalidateQueries({
+            queryKey: ["formDefinition", response.formId],
           });
         }
       }

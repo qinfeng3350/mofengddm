@@ -22,6 +22,19 @@ export class WorkflowController {
     });
   }
 
+  @Post('preview-assignees')
+  async previewAssignees(@Body() body: any, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req.headers['x-tenant-id'] || '1';
+    const userId = req.user?.id || req.user?.userId || body?.initiatorUserId;
+    return this.service.previewAssignees({
+      tenantId: String(tenantId),
+      workflow: body?.workflow || {},
+      data: body?.data || {},
+      initiatorUserId: userId ? String(userId) : undefined,
+      initiatorDeptId: body?.initiatorDeptId ? String(body.initiatorDeptId) : undefined,
+    });
+  }
+
   @Get('instances/:instanceId')
   async get(@Param('instanceId') instanceId: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req.headers['x-tenant-id'] || '1';

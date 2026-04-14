@@ -303,6 +303,144 @@ function mergeFieldForPropertiesForm(field: any, formSchema?: any): Record<strin
   };
 }
 
+type RelatedDataFilterConditionRow = { fieldId: string; operator: string; value: string };
+
+const RELATED_FILTER_OPERATORS = [
+  { value: "eq", label: "等于" },
+  { value: "ne", label: "不等于" },
+  { value: "gt", label: "大于" },
+  { value: "gte", label: "大于等于" },
+  { value: "lt", label: "小于" },
+  { value: "lte", label: "小于等于" },
+  { value: "contains", label: "包含" },
+  { value: "notContains", label: "不包含" },
+];
+
+/** 设计器：关联表单「数据筛选」条件编辑 */
+function RelatedDataFilterConditionsModal({
+  open,
+  title,
+  allRelatedFields,
+  currentFormFields,
+  initialConditions,
+  onCancel,
+  onOk,
+}: {
+  open: boolean;
+  title?: string;
+  allRelatedFields: any[];
+  currentFormFields: any[];
+  initialConditions: RelatedDataFilterConditionRow[];
+  onCancel: () => void;
+  onOk: (rows: RelatedDataFilterConditionRow[]) => void;
+}) {
+  const [rows, setRows] = useState<RelatedDataFilterConditionRow[]>([
+    { fieldId: "", operator: "eq", value: "" },
+  ]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (Array.isArray(initialConditions) && initialConditions.length > 0) {
+      setRows(
+        initialConditions.map((r) => ({
+          fieldId: String(r.fieldId || ""),
+          operator: r.operator || "eq",
+          value: String(r.value ?? ""),
+        })),
+      );
+    } else {
+      setRows([{ fieldId: "", operator: "eq", value: "" }]);
+    }
+  }, [open, initialConditions]);
+
+  const fieldOptions = allRelatedFields
+    .filter(
+      (f: any) =>
+        f?.fieldId &&
+        f?.type !== "button" &&
+        f?.type !== "description" &&
+        f?.type !== "subtable",
+    )
+    .map((f: any) => ({ label: f.label || f.fieldId, value: String(f.fieldId) }));
+
+  const currentFieldOptions = (currentFormFields || [])
+    .filter((f: any) => f?.fieldId && f?.type !== "button" && f?.type !== "description")
+    .map((f: any) => ({
+      label: `${f.label || f.fieldId} (${f.fieldId})`,
+      value: `{${String(f.fieldId)}}`,
+    }));
+
+  return (
+    <Modal
+      title={title || "数据筛选"}
+      open={open}
+      onCancel={onCancel}
+      onOk={() => onOk(rows.filter((r) => String(r.fieldId || "").trim()))}
+      okText="确定"
+      cancelText="取消"
+      width={640}
+      destroyOnClose
+    >
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+        条件作用于<strong>关联表单</strong>里的字段。比较值可填固定文本，或使用 {"{"}
+        当前表单字段ID{"}"} 引用填写页上的值（例如与主表分类联动）。
+      </Typography.Paragraph>
+      <Space direction="vertical" style={{ width: "100%" }} size={8}>
+        {rows.map((row, idx) => (
+          <Space key={idx} wrap style={{ width: "100%" }} align="start">
+            <Select
+              style={{ width: 180 }}
+              placeholder="关联表字段"
+              options={fieldOptions}
+              value={row.fieldId || undefined}
+              onChange={(v) => {
+                const next = [...rows];
+                next[idx] = { ...next[idx], fieldId: String(v || "") };
+                setRows(next);
+              }}
+            />
+            <Select
+              style={{ width: 120 }}
+              options={RELATED_FILTER_OPERATORS}
+              value={row.operator}
+              onChange={(v) => {
+                const next = [...rows];
+                next[idx] = { ...next[idx], operator: String(v) };
+                setRows(next);
+              }}
+            />
+            <Select
+              style={{ width: 220 }}
+              showSearch
+              allowClear
+              placeholder="请选择字段"
+              options={currentFieldOptions}
+              value={row.value || undefined}
+              onChange={(v) => {
+                const next = [...rows];
+                next[idx] = { ...next[idx], value: String(v || "") };
+                setRows(next);
+              }}
+              optionFilterProp="label"
+            />
+            <Button
+              danger
+              type="link"
+              onClick={() => setRows(rows.filter((_, i) => i !== idx))}
+              disabled={rows.length <= 1}
+            >
+              删除
+            </Button>
+          </Space>
+        ))}
+        <Button type="dashed" onClick={() => setRows([...rows, { fieldId: "", operator: "eq", value: "" }])}>
+          + 添加条件
+        </Button>
+      </Space>
+    </Modal>
+  );
+}
+
 // 控件属性面板
 const FieldPropertiesPanel = ({ 
   field, 
@@ -1321,6 +1459,8 @@ const SubtableFieldsConfigPanel = ({
 }) => {
   const [subtableFields, setSubtableFields] = useState<any[]>(field.subtableFields || []);
   const [modalVisible, setModalVisible] = useState(false);
+  const [subRelatedFilterModalOpen, setSubRelatedFilterModalOpen] = useState(false);
+  const [subRelatedFilterInitial, setSubRelatedFilterInitial] = useState<RelatedDataFilterConditionRow[]>([]);
   const [editingField, setEditingField] = useState<any>(null);
   const [form] = Form.useForm();
   const [searchParams] = useSearchParams();
@@ -1685,6 +1825,8 @@ const SubtableFieldsConfigPanel = ({
                     form.setFieldsValue({
                       relatedDisplayField: undefined,
                       fieldMappingPairs: [],
+                      enableDataFilter: false,
+                      relatedDataFilterConditions: [],
                     });
                   }}
                   notFoundContent={
@@ -1775,6 +1917,34 @@ const SubtableFieldsConfigPanel = ({
                   </Form.Item>
                 )}
               </Form.List>
+              <Form.Item label="数据筛选" name="enableDataFilter" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(p, c) => p.enableDataFilter !== c.enableDataFilter}>
+                {({ getFieldValue }) =>
+                  getFieldValue("enableDataFilter") ? (
+                    <Form.Item label="筛选条件">
+                      <Space wrap>
+                        <Button
+                          type="default"
+                          onClick={() => {
+                            setSubRelatedFilterInitial(
+                              (form.getFieldValue("relatedDataFilterConditions") ||
+                                []) as RelatedDataFilterConditionRow[],
+                            );
+                            setSubRelatedFilterModalOpen(true);
+                          }}
+                        >
+                          设置条件
+                        </Button>
+                        <Typography.Text type="secondary">
+                          已配置 {(form.getFieldValue("relatedDataFilterConditions") || []).length} 条
+                        </Typography.Text>
+                      </Space>
+                    </Form.Item>
+                  ) : null
+                }
+              </Form.Item>
             </>
           )}
           <Form.Item
@@ -1789,6 +1959,17 @@ const SubtableFieldsConfigPanel = ({
           </Form.Item>
         </Form>
       </Modal>
+      <RelatedDataFilterConditionsModal
+        open={subRelatedFilterModalOpen}
+        title="数据筛选"
+        allRelatedFields={allRelatedFields}
+        initialConditions={subRelatedFilterInitial}
+        onCancel={() => setSubRelatedFilterModalOpen(false)}
+        onOk={(conds) => {
+          form.setFieldsValue({ relatedDataFilterConditions: conds });
+          setSubRelatedFilterModalOpen(false);
+        }}
+      />
     </>
   );
 };
@@ -1803,6 +1984,9 @@ const RelatedFormConfigPanel = ({
   formSchema: any;
   onUpdate: (updates: Record<string, unknown>) => void;
 }) => {
+  const parentForm = Form.useFormInstance();
+  const enableDataFilter = Form.useWatch("enableDataFilter", parentForm);
+  const [dataFilterModalOpen, setDataFilterModalOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const appId = searchParams.get("appId");
   const applicationId = useFormDesignerStore((state) => state.applicationId);
@@ -1906,8 +2090,16 @@ const RelatedFormConfigPanel = ({
       // 切换关联表时，重置显示字段和映射
       relatedDisplayField: undefined,
       fieldMapping: undefined,
+      enableDataFilter: false,
+      relatedDataFilterConditions: [],
     });
     setFieldMapping({});
+    parentForm.setFieldsValue({
+      relatedFormId: formId,
+      relatedDisplayField: undefined,
+      enableDataFilter: false,
+      relatedDataFilterConditions: [],
+    });
   };
 
   const handleFieldMappingChange = (relatedFieldId: string, currentFieldId: string) => {
@@ -1982,6 +2174,19 @@ const RelatedFormConfigPanel = ({
           <Form.Item label="数据筛选" name="enableDataFilter" valuePropName="checked">
             <Switch />
           </Form.Item>
+
+          {enableDataFilter ? (
+            <Form.Item label="筛选条件">
+              <Space wrap>
+                <Button type="default" onClick={() => setDataFilterModalOpen(true)}>
+                  设置条件
+                </Button>
+                <Typography.Text type="secondary">
+                  已配置 {(field.relatedDataFilterConditions?.length || 0)} 条
+                </Typography.Text>
+              </Space>
+            </Form.Item>
+          ) : null}
 
           <Form.Item label="数据填充" name="enableDataFill" valuePropName="checked">
             <Switch />
@@ -2088,6 +2293,19 @@ const RelatedFormConfigPanel = ({
           </Form.Item>
         </>
       )}
+
+      <RelatedDataFilterConditionsModal
+        open={dataFilterModalOpen}
+        allRelatedFields={allRelatedFields}
+        currentFormFields={allCurrentFields}
+        initialConditions={(field.relatedDataFilterConditions || []) as RelatedDataFilterConditionRow[]}
+        onCancel={() => setDataFilterModalOpen(false)}
+        onOk={(conds) => {
+          onUpdate({ relatedDataFilterConditions: conds });
+          parentForm.setFieldsValue({ relatedDataFilterConditions: conds });
+          setDataFilterModalOpen(false);
+        }}
+      />
     </>
   );
 };

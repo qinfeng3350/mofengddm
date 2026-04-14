@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
-import { Form as AntForm, Button, Spin, message, Space, Modal, Row, Col } from "antd";
+import { Form as AntForm, Button, Spin, message, Space, Modal, Row, Col, Select, Alert } from "antd";
 import { UnorderedListOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -190,7 +190,7 @@ export const FormRenderer = ({
   const isEditMode = mode === "edit";
   const isMobile = useIsMobile();
   
-  const { data: formDefinition, isLoading } = useQuery({
+  const { data: formDefinition, isLoading, refetch: refetchFormDefinition } = useQuery({
     queryKey: ["formDefinition", formId],
     queryFn: () => formDefinitionApi.getById(formId),
   });
@@ -234,6 +234,10 @@ export const FormRenderer = ({
   });
 
   const { user } = useAuthStore();
+  const draftStorageKey = useMemo(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    return `mofeng:draft:${formId}:${uid}`;
+  }, [formId, user?.id]);
 
   // 当前用户角色（用于字段权限 - roleRules）
   const { data: myRoles } = useQuery({
@@ -386,8 +390,9 @@ export const FormRenderer = ({
     watch,
     setValue,
     getValues,
-    formState: { isSubmitting },
   } = methods;
+  const [isDraftSaving, setIsDraftSaving] = useState(false);
+  const [isFinalSubmitting, setIsFinalSubmitting] = useState(false);
 
   // 当默认值（例如查看/编辑时的已有数据）或流水号生成完成后，重置表单填充值
   // 否则第一次渲染是空的，后续获取到 existingData 也不会自动填入
@@ -403,6 +408,21 @@ export const FormRenderer = ({
       reset(defaultValues);
     }
   }, [defaultValues, serialNumberCache, reset]);
+
+  // 新增模式：打开时回填本地暂存草稿
+  useEffect(() => {
+    if (mode !== "add" || recordId) return;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        reset({ ...defaultValues, ...(parsed as Record<string, unknown>) });
+      }
+    } catch {
+      // ignore broken draft
+    }
+  }, [mode, recordId, draftStorageKey, reset, defaultValues]);
 
   // 监听表单值变化，用于公式计算
   const formValues = watch();
@@ -475,6 +495,11 @@ export const FormRenderer = ({
         // 不重置表单，不调用 onSubmitSuccess
       } else {
         // 提交：最终提交，关闭表单
+        try {
+          localStorage.removeItem(draftStorageKey);
+        } catch {
+          // ignore
+        }
         message.success(
           workflowStarted ? "提交成功（已发起流程）" : "提交成功",
         );
@@ -501,6 +526,11 @@ export const FormRenderer = ({
   // 提交前流程预览
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingSubmitData, setPendingSubmitData] = useState<Record<string, unknown> | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string>("");
+  const [previewResolved, setPreviewResolved] = useState<any>(null);
+  const [previewDeptOptions, setPreviewDeptOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [previewDeptId, setPreviewDeptId] = useState<string>("");
   const { data: allUsers = [] } = useQuery({
     queryKey: ["users", "forPreview"],
     queryFn: async () => {
@@ -517,6 +547,44 @@ export const FormRenderer = ({
     (allUsers as any[]).forEach((u) => u && map.set(String(u.id), u));
     return map;
   }, [allUsers]);
+
+  const fetchPreviewResolution = async (data: Record<string, unknown>, initiatorDeptId?: string) => {
+    const wf: any = formMetadata?.workflow;
+    if (!wf) return;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const res: any = await workflowApi.previewAssignees({
+        workflow: wf,
+        data,
+        initiatorDeptId: initiatorDeptId || undefined,
+      });
+      setPreviewResolved(res || null);
+      const options = Array.isArray(res?.initiatorDeptOptions) ? res.initiatorDeptOptions : [];
+      setPreviewDeptOptions(options);
+      if (initiatorDeptId) {
+        setPreviewDeptId(initiatorDeptId);
+      } else if (res?.selectedInitiatorDeptId) {
+        setPreviewDeptId(String(res.selectedInitiatorDeptId));
+      } else if (options.length) {
+        setPreviewDeptId(String(options[0].id));
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "加载审批人预览失败";
+      setPreviewError(msg);
+      setPreviewResolved(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+  const previewHasUnresolvedApprover = useMemo(() => {
+    const nodes = Array.isArray(previewResolved?.nodes) ? previewResolved.nodes : [];
+    return nodes.some((n: any) => {
+      const needAssignee = n?.type === "approval" || n?.type === "task" || n?.type === "handler";
+      if (!needAssignee) return false;
+      return !Array.isArray(n?.assigneeUsers) || n.assigneeUsers.length === 0;
+    });
+  }, [previewResolved]);
 
   // 部门字段：如果在设计器里选择了“本部门”，则在运行时把当前用户部门写入表单默认值
   useEffect(() => {
@@ -725,16 +793,42 @@ export const FormRenderer = ({
   }, [formDefinition, formValues, isViewMode, setValue, getValues]);
 
   const showPreviewThenSubmit = async (data: Record<string, unknown>) => {
+    if (isDraftSaving || isFinalSubmitting) return;
     if (hasWorkflowRuntime) {
       setPendingSubmitData(data);
+      // 设计器刚保存后，填报页仍可能命中 React Query 旧缓存；先拉最新定义再展示预览
+      try {
+        await refetchFormDefinition();
+      } catch (e) {
+        console.warn("刷新表单定义失败，将使用缓存中的流程配置预览", e);
+      }
+      await fetchPreviewResolution(data, previewDeptId || undefined);
       setPreviewOpen(true);
       return;
     }
-    await onSubmit(data, "submitted");
+    setIsFinalSubmitting(true);
+    try {
+      await onSubmit(data, "submitted");
+    } finally {
+      setIsFinalSubmitting(false);
+    }
   };
 
   const handleSaveDraft = async (data: Record<string, unknown>) => {
-    await onSubmit(data, "draft");
+    if (isDraftSaving || isFinalSubmitting) return;
+    setIsDraftSaving(true);
+    try {
+      // 新增模式：只存本地草稿，不触发真实提交
+      if (mode === "add" && !recordId) {
+        localStorage.setItem(draftStorageKey, JSON.stringify(data || {}));
+        message.success("暂存成功");
+        return;
+      }
+      // 编辑模式保留原有草稿行为（后端 status=draft）
+      await onSubmit(data, "draft");
+    } finally {
+      setIsDraftSaving(false);
+    }
   };
 
   if (isLoading) {
@@ -997,7 +1091,8 @@ export const FormRenderer = ({
             <Button
               htmlType="button"
               onClick={handleSubmit(handleSaveDraft)}
-              loading={isSubmitting}
+              loading={isDraftSaving}
+              disabled={isFinalSubmitting}
               style={{
                 background: "#fff",
                 color: "#1890ff",
@@ -1006,7 +1101,7 @@ export const FormRenderer = ({
             >
               暂存
             </Button>
-            <Button type="primary" htmlType="submit" loading={isSubmitting}>提交</Button>
+            <Button type="primary" htmlType="submit" loading={isFinalSubmitting} disabled={isDraftSaving}>提交</Button>
           </Space>
         </AntForm.Item>
       )}
@@ -1015,69 +1110,87 @@ export const FormRenderer = ({
       <Modal
         title="审批流程预览"
         open={previewOpen}
-        onCancel={() => setPreviewOpen(false)}
+        onCancel={() => {
+          setPreviewOpen(false);
+          setPreviewError("");
+        }}
         onOk={async () => {
+          if (isFinalSubmitting) return;
           const data = pendingSubmitData || {};
           setPreviewOpen(false);
-          await onSubmit(data, "submitted");
+          setIsFinalSubmitting(true);
+          try {
+            await onSubmit(data, "submitted");
+          } finally {
+            setIsFinalSubmitting(false);
+          }
+        }}
+        confirmLoading={isFinalSubmitting}
+        okButtonProps={{
+          disabled: previewLoading || previewHasUnresolvedApprover,
         }}
         okText="确定提交"
         cancelText="取消"
       >
-        {(() => {
-          const wf: any = formMetadata?.workflow;
-          const nodes = (wf?.nodes || []) as any[];
-          const edges = (wf?.edges || []) as any[];
-          if (!nodes.length) return <div>未配置流程</div>;
-
-          // 按流程连线计算顺序：从开始节点沿 edges 依次前进直到结束
-          const start = nodes.find((n: any) => n.type === 'start');
-          const ordered: any[] = [];
-          const visited = new Set<string>();
-          let current: any | undefined = start || nodes[0];
-          let safety = 0;
-          while (current && !visited.has(current.nodeId) && safety < 100) {
-            ordered.push(current);
-            visited.add(current.nodeId);
-            const e = edges.find((x: any) => x.source === current.nodeId);
-            const nextId = e?.target;
-            current = nextId ? nodes.find((n: any) => n.nodeId === nextId) : undefined;
-            safety++;
-          }
-          if (ordered[ordered.length - 1]?.type !== 'end') {
-            const end = nodes.find((n: any) => n.type === 'end');
-            if (end) ordered.push(end);
-          }
-
-          const list = ordered.length ? ordered : nodes;
-
-          return (
+        <Space direction="vertical" style={{ width: "100%" }} size={10}>
+          {previewDeptOptions.length > 0 && (
             <div>
-              {list.map((n, idx) => {
-                const names = Array.isArray(n.assignees?.values)
-                  ? n.assignees!.values
-                      .map((id: any) => {
-                        const u = userMap.get(String(id));
-                        return u ? (u.name || u.account) : String(id);
-                      })
-                      .filter(Boolean)
-                  : [];
-                return (
-                  <div key={n.nodeId || idx} style={{ marginBottom: 12 }}>
-                    <div style={{ fontWeight: 600 }}>
-                      {n.type === 'start' ? '发起' : n.type === 'end' ? '结束' : (n.label || n.type)}
-                    </div>
-                    {names.length > 0 ? (
-                      <div style={{ color: '#666' }}>审批人：{names.join(', ')}</div>
-                    ) : (
-                      <div style={{ color: '#999' }}>无指派/系统节点</div>
-                    )}
-                  </div>
-                );
-              })}
+              <div style={{ fontWeight: 500, marginBottom: 6 }}>
+                发起部门
+                <span style={{ marginLeft: 8, color: "#999", fontWeight: 400 }}>
+                  {previewDeptOptions.length > 1 ? "多部门发起时请确认" : `当前识别到 ${previewDeptOptions.length} 个部门`}
+                </span>
+              </div>
+              <Select
+                style={{ width: 320, maxWidth: "100%" }}
+                value={previewDeptId || undefined}
+                disabled={previewDeptOptions.length <= 1}
+                options={previewDeptOptions.map((d) => ({ label: d.name, value: d.id }))}
+                onChange={async (v) => {
+                  const nextDeptId = String(v || "");
+                  setPreviewDeptId(nextDeptId);
+                  if (pendingSubmitData) await fetchPreviewResolution(pendingSubmitData, nextDeptId);
+                }}
+              />
             </div>
-          );
-        })()}
+          )}
+
+          {previewError ? (
+            <Alert type="error" showIcon message={previewError} />
+          ) : previewLoading ? (
+            <div style={{ textAlign: "center", padding: 16 }}><Spin /></div>
+          ) : (
+            <div>
+              {Array.isArray(previewResolved?.nodes) && previewResolved.nodes.length > 0 ? (
+                previewResolved.nodes.map((n: any, idx: number) => {
+                  const users = Array.isArray(n?.assigneeUsers) ? n.assigneeUsers : [];
+                  return (
+                    <div key={n.nodeId || idx} style={{ marginBottom: 12 }}>
+                      <div style={{ fontWeight: 600 }}>
+                        {n.type === "start" ? "发起" : n.type === "end" ? "结束" : (n.label || n.type)}
+                      </div>
+                      {(n.type === "approval" || n.type === "task" || n.type === "handler") ? (
+                        users.length > 0 ? (
+                          <div style={{ color: "#666" }}>
+                            审批人：{users.map((u: any) => u.name || u.id).join("、")}
+                          </div>
+                        ) : (
+                          <div style={{ color: "#cf1322" }}>
+                            未解析到审批人，请先修正领导/角色同步后再提交
+                          </div>
+                        )
+                      ) : (
+                        <div style={{ color: "#999" }}>无指派/系统节点</div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div>未配置流程</div>
+              )}
+            </div>
+          )}
+        </Space>
       </Modal>
     </AntForm>
     </FormProvider>

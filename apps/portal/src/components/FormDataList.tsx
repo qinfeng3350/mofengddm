@@ -2725,6 +2725,12 @@ const OperationRecordModal: React.FC<{
   formId: string;
   onClose: () => void;
 }> = ({ visible, formId, onClose }) => {
+  const { data: formDefinition } = useQuery({
+    queryKey: ["formDefinition", "operation-modal", formId],
+    queryFn: () => formDefinitionApi.getById(formId),
+    enabled: visible && !!formId,
+  });
+
   const { data: logs = [], isLoading } = useQuery({
     queryKey: ["operationLogs", formId],
     queryFn: () => operationLogApi.getLogs(formId, undefined, 100),
@@ -2747,6 +2753,58 @@ const OperationRecordModal: React.FC<{
       delete: "red",
     };
     return map[type] || "default";
+  };
+
+  const fieldLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const cfg: any = (formDefinition as any)?.config || {};
+    const walk = (items: any[]) => {
+      (items || []).forEach((it: any) => {
+        if (!it || typeof it !== "object") return;
+        if (it.fieldId) {
+          map.set(String(it.fieldId), String(it.label || it.name || it.fieldId));
+          if (it.type === "subtable" && Array.isArray(it.subtableFields)) {
+            it.subtableFields.forEach((sf: any) => {
+              if (sf?.fieldId) map.set(String(sf.fieldId), String(sf.label || sf.name || sf.fieldId));
+            });
+          }
+        }
+        if (Array.isArray(it.children)) walk(it.children);
+        if (Array.isArray(it.columns)) {
+          it.columns.forEach((c: any) => Array.isArray(c?.children) && walk(c.children));
+        }
+      });
+    };
+    walk(cfg.elements || cfg.fields || []);
+    return map;
+  }, [formDefinition]);
+
+  const prettyFieldLabel = (fieldId?: string, fieldLabel?: string) => {
+    if (fieldLabel && !/^field_[A-Za-z0-9_]+$/.test(String(fieldLabel))) return String(fieldLabel);
+    const fid = String(fieldId || "");
+    return fieldLabelMap.get(fid) || (fid ? "字段" : "-");
+  };
+
+  const prettyDescription = (desc?: string) => {
+    if (!desc) return "";
+    let s = String(desc);
+    s = s.replace(/form_[A-Za-z0-9_]+/g, "当前表单");
+    s = s.replace(/record_[A-Za-z0-9_]+/g, "当前记录");
+    s = s.replace(/(subfield_[A-Za-z0-9_]+|field_[A-Za-z0-9_]+)/g, (token) => fieldLabelMap.get(token) || "字段");
+    return s;
+  };
+
+  const normalizeFieldChanges = (raw: any): Array<any> => {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
   };
 
   return (
@@ -2787,7 +2845,9 @@ const OperationRecordModal: React.FC<{
         />
       ) : (
         <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
-          {logs.map((log: OperationLog) => (
+          {logs.map((log: OperationLog) => {
+            const fieldChanges = normalizeFieldChanges((log as any).fieldChanges);
+            return (
             <div
               key={log.id}
               style={{
@@ -2811,22 +2871,22 @@ const OperationRecordModal: React.FC<{
                   </span>
                 </div>
                 <span style={{ color: "#999", fontSize: 12 }}>
-                  记录ID: {log.recordId.substring(0, 20)}...
+                  当前记录
                 </span>
               </div>
 
               {log.description && (
                 <div style={{ marginBottom: 8, color: "#666" }}>
-                  {log.description}
+                  {prettyDescription(log.description)}
                 </div>
               )}
 
-              {log.fieldChanges && log.fieldChanges.length > 0 && (
+              {fieldChanges.length > 0 && (
                 <div style={{ marginTop: 8 }}>
                   <div style={{ fontSize: 12, color: "#999", marginBottom: 8 }}>
                     字段变更：
                   </div>
-                  {log.fieldChanges.map((change, index) => (
+                  {fieldChanges.map((change, index) => (
                     <div
                       key={index}
                       style={{
@@ -2838,7 +2898,7 @@ const OperationRecordModal: React.FC<{
                       }}
                     >
                       <div style={{ fontWeight: 500, marginBottom: 4 }}>
-                        {change.fieldLabel || change.fieldId}
+                        {prettyFieldLabel(change.fieldId, change.fieldLabel)}
                       </div>
                       <div style={{ display: "flex", gap: 16, fontSize: 12 }}>
                         <div style={{ flex: 1 }}>
@@ -2867,7 +2927,7 @@ const OperationRecordModal: React.FC<{
                 </div>
               )}
             </div>
-          ))}
+          )})}
         </div>
       )}
     </Modal>

@@ -33,7 +33,7 @@ export const operationLogApi = {
     if (limit) {
       params.append('limit', limit.toString());
     }
-    const response = await apiClient.get(`/api/operation-logs?${params.toString()}`);
+    const response = await apiClient.get(`/operation-logs?${params.toString()}`);
     return Array.isArray(response) ? response : [];
   },
 };

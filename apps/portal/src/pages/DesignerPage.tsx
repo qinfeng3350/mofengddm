@@ -54,6 +54,8 @@ export const DesignerPage = () => {
   const [editingFormName, setEditingFormName] = useState(false);
   const [formNameValue, setFormNameValue] = useState(formSchema.formName);
   const [previewVisible, setPreviewVisible] = useState(false);
+  /** loadForm 完成后递增，用于强制流程画布与接口返回的 workflow 同步（避免 useNodesState 只吃首帧） */
+  const [processDesignerMountKey, setProcessDesignerMountKey] = useState(0);
 
   // 获取应用信息
   const { data: appInfo } = useQuery({
@@ -72,6 +74,7 @@ export const DesignerPage = () => {
       // 加载已有表单
       loadForm(formId)
         .then(() => {
+          setProcessDesignerMountKey((k) => k + 1);
         })
         .catch((error) => {
           console.error("加载表单失败:", error);
@@ -91,6 +94,7 @@ export const DesignerPage = () => {
           columns: 12,
         },
       });
+      setProcessDesignerMountKey((k) => k + 1);
     }
   }, [appId, formId, loadForm, setFormSchema, setApplicationId]);
 
@@ -455,12 +459,57 @@ export const DesignerPage = () => {
           {activeTab === "process" && (
             <Content style={{ background: "#f5f5f5", padding: 0, height: "100%", overflow: "auto" }}>
               <ProcessDesigner
+                key={`${formSchema.formId || "noform"}-${processDesignerMountKey}`}
                 value={formSchema.metadata?.workflow}
+                formFields={(formSchema.fields || []) as any[]}
                 onChange={(wf) => {
+                  const nodeRules = (wf?.nodes || []).reduce((acc: Record<string, any>, node: any) => {
+                    const matrix = node?.config?.fieldAuthMatrix || {};
+                    const matrixRows = Object.entries(matrix || {})
+                      .filter(([k]) => k !== "__all__")
+                      .map(([fieldId, v]: [string, any]) => {
+                        const visible = Boolean(v?.visible);
+                        const editable = Boolean(v?.editable);
+                        let permission = "readonly";
+                        if (!visible) permission = "hidden";
+                        else if (editable) permission = "editable";
+                        return {
+                          fieldId: String(fieldId),
+                          permission,
+                        };
+                      });
+
+                    const rows = node?.config?.nodeFieldPermissions;
+                    const fallbackRows = Array.isArray(rows)
+                      ? rows
+                          .filter((r: any) => r?.fieldId && r?.action)
+                          .map((r: any) => ({
+                            fieldId: String(r.fieldId),
+                            permission: String(r.action),
+                          }))
+                      : [];
+
+                    const fieldPermissions = matrixRows.length ? matrixRows : fallbackRows;
+                    if (fieldPermissions.length) {
+                      acc[String(node.nodeId)] = {
+                        readRoles: ["*"],
+                        writeRoles: ["*"],
+                        fieldPermissions,
+                      };
+                    }
+                    return acc;
+                  }, {});
                   setFormSchema({
                     ...formSchema,
                     metadata: {
                       ...(formSchema.metadata || {}),
+                      fieldPermissions: {
+                        ...((formSchema.metadata as any)?.fieldPermissions || {}),
+                        nodeRules: {
+                          ...(((formSchema.metadata as any)?.fieldPermissions?.nodeRules || {}) as Record<string, any>),
+                          ...nodeRules,
+                        },
+                      },
                       workflow: wf,
                     },
                   });

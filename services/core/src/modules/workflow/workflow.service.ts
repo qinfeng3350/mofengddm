@@ -8,6 +8,9 @@ import {
   FormDataEntity,
   TenantEntity,
   UserEntity,
+  UserRoleEntity,
+  RoleEntity,
+  DepartmentEntity,
 } from '../../database/entities';
 import { BusinessRuleExecutorService } from '../business-rule/business-rule.executor';
 import { DingtalkService } from '../dingtalk/dingtalk.service';
@@ -15,9 +18,9 @@ import { EnterpriseLogService } from '../enterprise-log/enterprise-log.service';
 
 type WorkflowNode = {
   nodeId: string;
-  type: 'start' | 'end' | 'approval' | 'condition' | 'parallel' | 'task';
+  type: 'start' | 'end' | 'approval' | 'condition' | 'parallel' | 'task' | 'handler' | 'merge' | 'subprocess';
   label: string;
-  assignees?: { type?: string; values?: string[] };
+  assignees?: { type?: string; values?: string[]; formFieldId?: string };
   config?: Record<string, unknown>;
 };
 
@@ -41,12 +44,424 @@ export class WorkflowService {
     private readonly tenantRepository: Repository<TenantEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(UserRoleEntity)
+    private readonly userRoleRepository: Repository<UserRoleEntity>,
+    @InjectRepository(RoleEntity)
+    private readonly roleRepository: Repository<RoleEntity>,
+    @InjectRepository(DepartmentEntity)
+    private readonly departmentRepository: Repository<DepartmentEntity>,
     @Inject(forwardRef(() => BusinessRuleExecutorService))
     private readonly ruleExecutor: BusinessRuleExecutorService,
     private readonly dingtalkService: DingtalkService,
     private readonly configService: ConfigService,
     private readonly enterpriseLogService: EnterpriseLogService,
   ) {}
+
+  private parseJsonObject(input: unknown): Record<string, any> {
+    if (!input) return {};
+    if (typeof input === 'string') {
+      try {
+        return JSON.parse(input);
+      } catch {
+        return {};
+      }
+    }
+    if (typeof input === 'object') return input as Record<string, any>;
+    return {};
+  }
+
+  /** 钉钉 userid → 本系统 users.id（账号 dingtalk_{userid} 或 metadata.dingtalkUserId） */
+  private async resolveDingtalkUserIdToSystemUserId(
+    tenantId: string,
+    dingtalkUserId: string,
+  ): Promise<string | null> {
+    const dt = String(dingtalkUserId || '').trim();
+    if (!dt) return null;
+    const byAccount = await this.userRepository.findOne({
+      where: { tenantId, account: `dingtalk_${dt}`, status: 1 } as any,
+    });
+    if (byAccount?.id) return String(byAccount.id);
+    const byMeta = await this.userRepository
+      .createQueryBuilder('u')
+      .where('u.tenantId = :tenantId', { tenantId })
+      .andWhere('u.status = :status', { status: 1 })
+      .andWhere(`JSON_UNQUOTE(JSON_EXTRACT(u.metadata, '$.dingtalkUserId')) = :dt`, { dt })
+      .getMany();
+    if (byMeta.length >= 1 && byMeta[0].id) return String(byMeta[0].id);
+    return null;
+  }
+
+  /**
+   * 「发起人直属上级」：优先 hand-written metadata，其次钉钉同步的 dingtalkManagerUserId，
+   * 再尝试部门 metadata / 同部门标记为负责人的用户。不再回退为发起人本人（避免「领导是自己」）。
+   */
+  private async resolveInitiatorLeaderUserIds(
+    tenantId: string,
+    submitterId: string,
+    preferredDeptId?: string,
+  ): Promise<string[]> {
+    const uniq = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+    if (!submitterId) return [];
+    const initiator = await this.userRepository.findOne({
+      where: { id: submitterId, tenantId } as any,
+    });
+    if (!initiator) return [];
+
+    const um = this.parseJsonObject(initiator.metadata);
+    const directLeaderId = um?.leaderUserId || um?.managerUserId || um?.managerId || um?.parentUserId;
+    if (directLeaderId) {
+      const leaderId = String(directLeaderId);
+      if (leaderId && leaderId !== String(submitterId)) return uniq([leaderId]);
+    }
+
+    const dtMgr = um?.dingtalkManagerUserId ? String(um.dingtalkManagerUserId) : '';
+    if (dtMgr) {
+      const resolved = await this.resolveDingtalkUserIdToSystemUserId(tenantId, dtMgr);
+      if (resolved && resolved !== String(submitterId)) return uniq([resolved]);
+    }
+
+    const deptId = preferredDeptId
+      ? String(preferredDeptId)
+      : initiator.departmentId
+        ? String(initiator.departmentId)
+        : '';
+    if (deptId) {
+      const dept = await this.departmentRepository.findOne({
+        where: { id: deptId, tenantId } as any,
+      });
+      const dm = this.parseJsonObject(dept?.metadata);
+      const deptLeaderSys = dm?.leaderUserId || dm?.deptLeaderUserId;
+      if (deptLeaderSys) {
+        const leaderId = String(deptLeaderSys);
+        if (leaderId && leaderId !== String(submitterId)) return uniq([leaderId]);
+      }
+
+      const peers = await this.userRepository.find({
+        where: { tenantId, departmentId: deptId, status: 1 } as any,
+        select: ['id', 'metadata'] as any,
+      });
+      const leaderByDeptFlag = peers.find((u) => {
+        if (String(u.id) === String(submitterId)) return false;
+        const m = this.parseJsonObject(u.metadata);
+        const li = Array.isArray(m?.dingtalkLeaderInDept) ? m.dingtalkLeaderInDept : [];
+        const target = String(preferredDeptId || deptId);
+        return li.some((x: any) => {
+          if (x?.leader !== true) return false;
+          return String(x?.deptSystemId || '') === target || String(x?.deptId || '') === target;
+        });
+      });
+      if (leaderByDeptFlag?.id) return uniq([String(leaderByDeptFlag.id)]);
+      const leader = peers.find(u => {
+        if (String(u.id) === String(submitterId)) return false;
+        const m = this.parseJsonObject(u.metadata);
+        return m?.isLeader === true || m?.isAdmin === true || m?.isBoss === true;
+      });
+      if (leader?.id) return uniq([String(leader.id)]);
+    }
+
+    console.warn(
+      '[WorkflowService] initiatorLeader 无法解析到上级用户（请钉钉同步写入 dingtalkManagerUserId，或在用户 metadata 配置 leaderUserId）',
+      { tenantId, submitterId },
+    );
+    return [];
+  }
+
+  private async resolveAssignedUserIds(params: {
+    tenantId: string;
+    recordId?: string;
+    assignees?: { type?: string; values?: string[]; formFieldId?: string };
+    fallbackUserId?: string;
+    submitterIdOverride?: string;
+    draftData?: Record<string, any>;
+    initiatorDeptId?: string;
+  }): Promise<string[]> {
+    const {
+      tenantId,
+      recordId,
+      assignees,
+      fallbackUserId,
+      submitterIdOverride,
+      draftData,
+      initiatorDeptId,
+    } = params;
+    const type = String(assignees?.type || '');
+    const values = Array.isArray(assignees?.values) ? assignees!.values.map(String) : [];
+    const uniq = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+
+    const formData = recordId
+      ? await this.formDataRepo.findOne({ where: { tenantId, recordId } })
+      : null;
+    const formValues = (draftData || formData?.data || {}) as Record<string, any>;
+    const submitterId =
+      submitterIdOverride
+        ? String(submitterIdOverride)
+        : formData?.submitterId
+          ? String(formData.submitterId)
+          : fallbackUserId
+            ? String(fallbackUserId)
+            : '';
+
+    if (type === 'initiator') {
+      return uniq([submitterId]);
+    }
+
+    if (type === 'initiatorLeader') {
+      return this.resolveInitiatorLeaderUserIds(tenantId, submitterId, initiatorDeptId);
+    }
+
+    if (type === 'user') {
+      return uniq(values);
+    }
+
+    if (type === 'role') {
+      if (!values.length) return [];
+      const roles = await this.roleRepository.find({ where: { tenantId } as any, select: ['id'] as any });
+      const roleIdSet = new Set(roles.map((r) => String(r.id)));
+      const roleIds = values.map(String).filter((id) => roleIdSet.has(id));
+      if (!roleIds.length) return [];
+      const urs = await this.userRoleRepository
+        .createQueryBuilder('ur')
+        .select(['ur.userId as userId'])
+        .where('ur.roleId IN (:...roleIds)', { roleIds })
+        .getRawMany();
+      return uniq(urs.map((x: any) => String(x.userId)));
+    }
+
+    if (type === 'department') {
+      if (!values.length) return [];
+      const depts = await this.departmentRepository.find({ where: { tenantId } as any, select: ['id'] as any });
+      const deptIdSet = new Set(depts.map((d) => String(d.id)));
+      const deptIds = values.map(String).filter((id) => deptIdSet.has(id));
+      if (!deptIds.length) return [];
+      const users = await this.userRepository
+        .createQueryBuilder('u')
+        .select(['u.id as id'])
+        .where('u.tenantId = :tenantId', { tenantId })
+        .andWhere('u.status = :status', { status: 1 })
+        .andWhere('u.departmentId IN (:...deptIds)', { deptIds })
+        .getRawMany();
+      return uniq(users.map((u: any) => String(u.id)));
+    }
+
+    if (type === 'formField') {
+      const fieldId = assignees?.formFieldId ? String(assignees.formFieldId) : '';
+      if (!fieldId) return [];
+      if (fieldId === '__initiator__') {
+        return uniq([submitterId]);
+      }
+      if (fieldId === '__dept_leader__') {
+        return this.resolveInitiatorLeaderUserIds(tenantId, submitterId, initiatorDeptId);
+      }
+      if (fieldId === '__owner__') {
+        const ownerId = formValues?.ownerId || submitterId;
+        return uniq([String(ownerId || '')]);
+      }
+      if (fieldId === '__owner_dept__') {
+        const deptId = String(formValues?.ownerDeptId || initiatorDeptId || '');
+        if (!deptId) return [];
+        const users = await this.userRepository
+          .createQueryBuilder('u')
+          .select(['u.id as id'])
+          .where('u.tenantId = :tenantId', { tenantId })
+          .andWhere('u.status = :status', { status: 1 })
+          .andWhere('u.departmentId = :deptId', { deptId })
+          .getRawMany();
+        return uniq(users.map((u: any) => String(u.id)));
+      }
+      const raw = formValues[fieldId];
+      if (Array.isArray(raw)) {
+        return uniq(
+          raw.map((v: any) =>
+            typeof v === 'object' && v
+              ? String(v.id ?? v.userId ?? v.value ?? '')
+              : String(v ?? ''),
+          ),
+        );
+      }
+      if (raw && typeof raw === 'object') {
+        return uniq([String(raw.id ?? raw.userId ?? raw.value ?? '')]);
+      }
+      return uniq([String(raw ?? '')]);
+    }
+
+    return uniq(values);
+  }
+
+  private collectInitiatorDeptIds(user: UserEntity): string[] {
+    const uniq = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+    const out: string[] = [];
+    if (user.departmentId) out.push(String(user.departmentId));
+    const m = this.parseJsonObject(user.metadata);
+    const pushAny = (v: any) => {
+      if (Array.isArray(v)) {
+        v.forEach((x) => {
+          const s = String(x ?? '').trim();
+          if (s) out.push(s);
+        });
+        return;
+      }
+      if (v != null && String(v).trim()) out.push(String(v).trim());
+    };
+    pushAny(m?.departmentIds);
+    pushAny(m?.deptIds);
+    pushAny(m?.dingtalkDeptIds);
+    pushAny(m?.dingtalkDeptId);
+    return uniq(out);
+  }
+
+  private async getInitiatorDeptOptions(
+    tenantId: string,
+    userId: string,
+  ): Promise<{
+    options: Array<{ id: string; name: string }>;
+    primaryDeptId?: string;
+  }> {
+    const initiator = await this.userRepository.findOne({
+      where: { tenantId, id: userId } as any,
+      select: ['id', 'departmentId', 'metadata'] as any,
+    });
+    if (!initiator) return { options: [] };
+    const ids = this.collectInitiatorDeptIds(initiator);
+    if (!ids.length) return { options: [] };
+    const primaryDeptId = initiator.departmentId
+      ? String(initiator.departmentId)
+      : undefined;
+    const byIdRows = await this.departmentRepository.find({
+      where: { tenantId } as any,
+      select: ['id', 'name', 'code', 'parentId'] as any,
+    });
+    const byId = new Map<string, { id: string; name: string }>();
+    const byCode = new Map<string, { id: string; name: string }>();
+    const parentById = new Map<string, string | undefined>();
+    byIdRows.forEach((d) => {
+      byId.set(String(d.id), { id: String(d.id), name: String(d.name || d.id) });
+      if ((d as any).code) byCode.set(String((d as any).code), { id: String(d.id), name: String(d.name || d.id) });
+      parentById.set(String(d.id), (d as any).parentId ? String((d as any).parentId) : undefined);
+    });
+    const deptTargets: string[] = [];
+    ids.forEach((raw) => {
+      if (byId.has(raw)) {
+        deptTargets.push(raw);
+        return;
+      }
+      const maybeCode = raw.startsWith('dingtalk_') ? raw : `dingtalk_${raw}`;
+      if (byCode.has(maybeCode)) deptTargets.push(String(byCode.get(maybeCode)!.id));
+    });
+
+    // 将每个候选部门的祖先链（公司主体 -> 子部门）展开，保证顶层主体在最上方。
+    const orderedIds: string[] = [];
+    const pushOrdered = (deptId: string) => {
+      if (!deptId || orderedIds.includes(deptId)) return;
+      orderedIds.push(deptId);
+    };
+    deptTargets.forEach((leafId) => {
+      const chain: string[] = [];
+      let cur: string | undefined = leafId;
+      let guard = 0;
+      while (cur && guard++ < 50) {
+        chain.unshift(cur);
+        cur = parentById.get(cur);
+      }
+      chain.forEach(pushOrdered);
+    });
+
+    const options = orderedIds
+      .map((id) => byId.get(id))
+      .filter(Boolean) as Array<{ id: string; name: string }>;
+
+    return { options, primaryDeptId };
+  }
+
+  async previewAssignees(params: {
+    tenantId: string;
+    workflow: { nodes?: WorkflowNode[]; edges?: WorkflowEdge[] };
+    data?: Record<string, any>;
+    initiatorUserId?: string;
+    initiatorDeptId?: string;
+  }) {
+    const { tenantId, workflow, data, initiatorUserId, initiatorDeptId } = params;
+    const nodes = (workflow?.nodes || []) as WorkflowNode[];
+    const edges = (workflow?.edges || []) as WorkflowEdge[];
+    const start = nodes.find((n) => n.type === 'start');
+    const ordered: WorkflowNode[] = [];
+    const seen = new Set<string>();
+    let cur: WorkflowNode | undefined = start || nodes[0];
+    let guard = 0;
+    while (cur && !seen.has(cur.nodeId) && guard++ < 100) {
+      ordered.push(cur);
+      seen.add(cur.nodeId);
+      const e = edges.find((x) => x.source === cur!.nodeId);
+      const nextId = e?.target;
+      cur = nextId ? nodes.find((n) => n.nodeId === nextId) : undefined;
+    }
+    const line = ordered.length ? ordered : nodes;
+
+    const initiatorDeptInfo = initiatorUserId
+      ? await this.getInitiatorDeptOptions(tenantId, initiatorUserId)
+      : { options: [] as Array<{ id: string; name: string }>, primaryDeptId: undefined };
+    const initiatorDeptOptions = initiatorDeptInfo.options || [];
+    const selectedInitiatorDeptId =
+      initiatorDeptId ||
+      initiatorDeptInfo.primaryDeptId ||
+      initiatorDeptOptions[0]?.id;
+
+    const resolvedNodes = await Promise.all(
+      line.map(async (n) => {
+        if (!(n.type === 'approval' || n.type === 'task' || n.type === 'handler')) {
+          return {
+            nodeId: n.nodeId,
+            type: n.type,
+            label: n.label,
+            assigneeUserIds: [] as string[],
+            assigneeUsers: [] as Array<{ id: string; name: string }>,
+          };
+        }
+        const ids = await this.resolveAssignedUserIds({
+          tenantId,
+          assignees: n.assignees,
+          fallbackUserId: initiatorUserId,
+          submitterIdOverride: initiatorUserId,
+          draftData: data || {},
+          initiatorDeptId: selectedInitiatorDeptId,
+        });
+        const users = ids.length
+          ? await this.userRepository
+              .createQueryBuilder('u')
+              .select(['u.id as id', 'u.name as name', 'u.account as account'])
+              .where('u.tenantId = :tenantId', { tenantId })
+              .andWhere('u.status = :status', { status: 1 })
+              .andWhere('u.id IN (:...ids)', { ids })
+              .getRawMany()
+          : [];
+        const userMap = new Map(users.map((u: any) => [String(u.id), u]));
+        const assigneeUsers = ids
+          .map((id) => {
+            const u = userMap.get(String(id));
+            return { id: String(id), name: u ? String(u.name || u.account || id) : String(id) };
+          })
+          .filter(Boolean);
+        return {
+          nodeId: n.nodeId,
+          type: n.type,
+          label: n.label,
+          assignees: n.assignees || {},
+          assigneeUserIds: ids,
+          assigneeUsers,
+          unresolved: ids.length === 0,
+        };
+      }),
+    );
+
+    return {
+      nodes: resolvedNodes,
+      initiatorDeptOptions,
+      selectedInitiatorDeptId: selectedInitiatorDeptId || '',
+      syncHints: {
+        leader: '若“发起人直属上级”为空，请先钉钉同步并确保 manager_userid/leaderUserId 已写入。',
+        role: '若“按角色”为空，请检查该角色下是否有启用用户。',
+      },
+    };
+  }
 
   private async pushDingtalkTodoIfNeeded(params: {
     tenantId: string;
@@ -330,13 +745,22 @@ export class WorkflowService {
 
     // 创建首个任务（如果下一个节点是审批或抄送）
     const nextNode = workflow.nodes.find(n => n.nodeId === nextNodeId);
-    if (nextNode && (nextNode.type === 'approval' || nextNode.type === 'task')) {
+    if (nextNode && (nextNode.type === 'approval' || nextNode.type === 'task' || nextNode.type === 'handler')) {
+      const resolvedValues = await this.resolveAssignedUserIds({
+        tenantId,
+        recordId,
+        assignees: nextNode.assignees,
+        fallbackUserId: userId ? String(userId) : undefined,
+      });
       (instance.tasks as any[]).push({
         taskId: `tk_${Date.now()}`,
         nodeId: nextNode.nodeId,
         nodeType: nextNode.type,
         label: nextNode.label,
-        assignees: nextNode.assignees || {},
+        assignees: {
+          ...(nextNode.assignees || {}),
+          values: resolvedValues,
+        },
         status: 'pending',
         createdAt: now.toISOString(),
       });
@@ -345,10 +769,10 @@ export class WorkflowService {
     const saved = await this.instanceRepo.save(instance);
 
     // 创建待办推送到钉钉（如果该流程第一个节点需要指派）
-    if (nextNode && (nextNode.type === 'approval' || nextNode.type === 'task')) {
+    if (nextNode && (nextNode.type === 'approval' || nextNode.type === 'task' || nextNode.type === 'handler')) {
       const firstTask = (instance.tasks as any[])[0];
-      const assignees = nextNode.assignees || {};
-      const values: string[] = Array.isArray(assignees.values) ? assignees.values : [];
+      const assignees = firstTask?.assignees || {};
+      const values: string[] = Array.isArray(assignees.values) ? assignees.values.map(String) : [];
       if (firstTask?.taskId) {
         const dt = await this.pushDingtalkTodoIfNeeded({
           tenantId,
@@ -521,7 +945,7 @@ export class WorkflowService {
       if (
         createdTask?.taskId &&
         assigneeIds.length &&
-        (prevNode.type === 'approval' || prevNode.type === 'task' || prevNode.type === 'start')
+        (prevNode.type === 'approval' || prevNode.type === 'task' || prevNode.type === 'handler' || prevNode.type === 'start')
       ) {
         const dt = await this.pushDingtalkTodoIfNeeded({
           tenantId,
@@ -640,13 +1064,22 @@ export class WorkflowService {
     inst.currentNodeId = nextNodeId;
 
     // 如果下一个节点是审批或抄送，创建待办
-    if (nextNode.type === 'approval' || nextNode.type === 'task') {
+    if (nextNode.type === 'approval' || nextNode.type === 'task' || nextNode.type === 'handler') {
+      const resolvedValues = await this.resolveAssignedUserIds({
+        tenantId,
+        recordId: String(inst.recordId),
+        assignees: nextNode.assignees,
+        fallbackUserId: payload.userId ? String(payload.userId) : undefined,
+      });
       (inst.tasks as any[]).push({
         taskId: `tk_${Date.now()}`,
         nodeId: nextNode.nodeId,
         nodeType: nextNode.type,
         label: nextNode.label,
-        assignees: nextNode.assignees || {},
+        assignees: {
+          ...(nextNode.assignees || {}),
+          values: resolvedValues,
+        },
         status: 'pending',
       });
     }
@@ -654,10 +1087,10 @@ export class WorkflowService {
     const saved = await this.instanceRepo.save(inst);
 
     // 推送待办到钉钉
-    if (nextNode.type === 'approval' || nextNode.type === 'task') {
+    if (nextNode.type === 'approval' || nextNode.type === 'task' || nextNode.type === 'handler') {
       const createdTask = (inst.tasks as any[]).find((t: any) => t.nodeId === nextNode.nodeId && t.status === 'pending');
-      const assignees = nextNode.assignees || {};
-      const values: string[] = Array.isArray(assignees.values) ? assignees.values : [];
+      const assignees = createdTask?.assignees || {};
+      const values: string[] = Array.isArray(assignees.values) ? assignees.values.map(String) : [];
       if (createdTask?.taskId) {
         const dt = await this.pushDingtalkTodoIfNeeded({
           tenantId,
