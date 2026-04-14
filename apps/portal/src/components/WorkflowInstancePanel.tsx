@@ -291,7 +291,7 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
         !instance ? (
           <div style={{ color: "#999" }}>未找到流程实例</div>
         ) : (
-          <Space direction="vertical" style={{ width: "100%" }}>
+          <Space orientation="vertical" style={{ width: "100%" }}>
           <Descriptions column={3} bordered size="small">
             <Descriptions.Item label="实例ID">{instance.id}</Descriptions.Item>
             <Descriptions.Item label="状态">
@@ -319,7 +319,7 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
             <div style={{ marginTop: 12 }}>
               <div style={{ fontWeight: 600, marginBottom: 8 }}>流程节点（按设计顺序）</div>
               <Steps
-                direction="vertical"
+                orientation="vertical"
                 size="small"
                 items={orderedDefinitionNodes.map((node) => {
                   const done = (instance.history || []).some((h: any) => h.nodeId === node.nodeId);
@@ -336,7 +336,7 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
                   return {
                     status,
                     title: nodeTypeTitle(node),
-                    description: <span style={{ fontSize: 12, color: "#888" }}>{desc}</span>,
+                    content: <span style={{ fontSize: 12, color: "#888" }}>{desc}</span>,
                   };
                 })}
               />
@@ -344,26 +344,28 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
           )}
 
           <div style={{ fontWeight: 600, marginTop: 8 }}>流转记录</div>
-          <Timeline style={{ marginTop: 8 }}>
-            {(instance.history || []).map((h: any, idx: number) => (
-              <Timeline.Item
-                key={idx}
-                color={h.type === "approve" ? "green" : h.type === "reject" ? "red" : "blue"}
-              >
-                <div style={{ fontWeight: 500 }}>
-                  {historyItemTitle(h, instance?.definition)}
-                </div>
-                <div style={{ color: "#666" }}>
-                  {resolveUser(h.userId, h.userName)} · {historyActionVerb(h, instance?.definition)}
-                </div>
-                <div style={{ color: "#999", fontSize: 12 }}>{h.at && dayjs(h.at).format("YYYY-MM-DD HH:mm:ss")}</div>
-                {h.comment && <div style={{ color: "#999", marginTop: 4 }}>备注：{h.comment}</div>}
-              </Timeline.Item>
-            ))}
-          </Timeline>
+          <Timeline
+            style={{ marginTop: 8 }}
+            items={(instance.history || []).map((h: any, idx: number) => ({
+              key: idx,
+              color: h.type === "approve" ? "green" : h.type === "reject" ? "red" : "blue",
+              children: (
+                <>
+                  <div style={{ fontWeight: 500 }}>{historyItemTitle(h, instance?.definition)}</div>
+                  <div style={{ color: "#666" }}>
+                    {resolveUser(h.userId, h.userName)} · {historyActionVerb(h, instance?.definition)}
+                  </div>
+                  <div style={{ color: "#999", fontSize: 12 }}>
+                    {h.at && dayjs(h.at).format("YYYY-MM-DD HH:mm:ss")}
+                  </div>
+                  {h.comment && <div style={{ color: "#999", marginTop: 4 }}>备注：{h.comment}</div>}
+                </>
+              ),
+            }))}
+          />
 
           {pendingTask && canHandle && (
-            <Space direction="vertical" style={{ width: "100%" }}>
+            <Space orientation="vertical" style={{ width: "100%" }}>
               {pendingAtStartNode && (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   当前为退回后的发起节点：请先到表单中修改数据并保存，再点击下方「提交」进入下一审批节点。
@@ -428,8 +430,9 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
       ) : operationLogs.length === 0 ? (
         <Empty description="暂无操作记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
-        <Timeline style={{ marginTop: 8 }}>
-          {operationLogs.map((log: any, idx: number) => {
+        <Timeline
+          style={{ marginTop: 8 }}
+          items={operationLogs.map((log: any, idx: number) => {
             const fieldChanges =
               Array.isArray(log?.fieldChanges)
                 ? log.fieldChanges
@@ -448,12 +451,11 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
               (log?.description && String(log.description).includes("业务规则"))
                 ? "业务规则"
                 : "人工操作";
-            return (
-              <Timeline.Item
-                key={`${log.id || idx}`}
-                color={log.operationType === "delete" ? "red" : log.operationType === "create" ? "green" : "blue"}
-              >
-                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+            return {
+              key: `${log.id || idx}`,
+              color: log.operationType === "delete" ? "red" : log.operationType === "create" ? "green" : "blue",
+              children: (
+                <Space orientation="vertical" size={4} style={{ width: "100%" }}>
                   <Space wrap>
                     <Tag color={sourceText === "业务规则" ? "purple" : "cyan"}>{sourceText}</Tag>
                     <Tag>{log.operationType === "create" ? "新增" : log.operationType === "delete" ? "删除" : "更新"}</Tag>
@@ -476,10 +478,10 @@ export const WorkflowInstancePanel: React.FC<Props> = ({ recordId }) => {
                     </div>
                   ) : null}
                 </Space>
-              </Timeline.Item>
-            );
+              ),
+            };
           })}
-        </Timeline>
+        />
       )}
     </Card>
   );

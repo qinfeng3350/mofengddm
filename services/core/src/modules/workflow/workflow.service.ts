@@ -737,9 +737,9 @@ export class WorkflowService {
         return null;
       }
 
-      const detailUrl = `${portalBaseUrl}/?todoRecordId=${encodeURIComponent(
+      const detailUrl = `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
         params.recordId,
-      )}${formId ? `&todoFormId=${encodeURIComponent(formId)}` : ''}`;
+      )}${formId ? `&formId=${encodeURIComponent(formId)}` : ''}`;
 
       const formData = await this.formDataRepo.findOne({
         where: { tenantId: params.tenantId, recordId: params.recordId } as any,
