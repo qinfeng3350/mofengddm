@@ -611,7 +611,8 @@ export class WorkflowService {
         process.env.PORTAL_PUBLIC_BASE_URL ||
         process.env.PUBLIC_PORTAL_URL ||
         '';
-      const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+      const nodeEnv = String(process.env.NODE_ENV || '').toLowerCase();
+      const isProd = nodeEnv !== 'development' && nodeEnv !== 'test';
       const localDevPortal = 'http://localhost:5173';
       let portalBaseUrl = configuredPortalBaseUrl || (!isProd ? localDevPortal : '');
 
@@ -620,10 +621,10 @@ export class WorkflowService {
         if (serverName) {
           portalBaseUrl = `https://${serverName}`;
         } else {
+          portalBaseUrl = 'https://ddm.mofeng33506.xyz';
           console.warn(
-            '[WorkflowService] 跳过钉钉待办：生产环境 PORTAL_BASE_URL 仍为 localhost，且未提供 SERVER_NAME/DOMAIN。',
+            '[WorkflowService] 生产环境 PORTAL_BASE_URL 为 localhost，已自动回退到 https://ddm.mofeng33506.xyz',
           );
-          return null;
         }
       }
 
@@ -642,6 +643,10 @@ export class WorkflowService {
       let todoTitleTemplate = '';
       let dingtalkEnabled = true;
       let dingtalkTodoEnabled = true;
+      let dingtalkMessageContent = '';
+      let dingtalkRemarkTemplate = '';
+      let dingtalkAppendRemark = true;
+      let dingtalkMessageFormFields: Array<{ label?: string; token?: string }> = [];
       try {
         const inst = await this.instanceRepo.findOne({
           where: { tenantId: params.tenantId, recordId: params.recordId },
@@ -653,6 +658,12 @@ export class WorkflowService {
         todoTitleTemplate = String(meta?.dingtalk?.todoTitleTemplate || '').trim();
         dingtalkEnabled = meta?.dingtalk?.enabled !== false;
         dingtalkTodoEnabled = meta?.dingtalk?.todoEnabled !== false;
+        dingtalkMessageContent = String(meta?.dingtalk?.messageContent || '').trim();
+        dingtalkRemarkTemplate = String(meta?.dingtalk?.remark || '').trim();
+        dingtalkAppendRemark = meta?.dingtalk?.appendRemark !== false;
+        dingtalkMessageFormFields = Array.isArray(meta?.dingtalk?.messageFormFields)
+          ? (meta?.dingtalk?.messageFormFields as Array<{ label?: string; token?: string }>)
+          : [];
         if (formId) {
           const formDef = await this.formRepo.findOne({
             where: { tenantId: params.tenantId, formId },
@@ -662,6 +673,18 @@ export class WorkflowService {
             (formDef as any)?.config?.workflow?.metadata?.dingtalk || {};
           if (!todoTitleTemplate) {
             todoTitleTemplate = String(workflowMetaFromDefinition?.todoTitleTemplate || '').trim();
+          }
+          if (!dingtalkMessageContent) {
+            dingtalkMessageContent = String(workflowMetaFromDefinition?.messageContent || '').trim();
+          }
+          if (!dingtalkRemarkTemplate) {
+            dingtalkRemarkTemplate = String(workflowMetaFromDefinition?.remark || '').trim();
+          }
+          if (!dingtalkMessageFormFields.length && Array.isArray(workflowMetaFromDefinition?.messageFormFields)) {
+            dingtalkMessageFormFields = workflowMetaFromDefinition.messageFormFields;
+          }
+          if (workflowMetaFromDefinition?.appendRemark === false) {
+            dingtalkAppendRemark = false;
           }
           if (workflowMetaFromDefinition?.enabled === false) {
             dingtalkEnabled = false;
@@ -701,13 +724,65 @@ export class WorkflowService {
             .replace(/\{记录ID\}/g, String(params.recordId || ''))
         : `待办：${params.nodeLabel}`;
 
+      const formData = await this.formDataRepo.findOne({
+        where: { tenantId: params.tenantId, recordId: params.recordId } as any,
+      });
+      const formValues = (formData?.data || {}) as Record<string, any>;
+      const submitterName = String((formData as any)?.submitterName || '提交人');
+      const updatedAtText = formData?.updatedAt
+        ? new Date(formData.updatedAt as any).toLocaleString('zh-CN', { hour12: false })
+        : new Date().toLocaleString('zh-CN', { hour12: false });
+
+      const resolveToken = (tokenRaw: string) => {
+        const token = String(tokenRaw || '').trim();
+        if (!token) return '';
+        const inner = token.replace(/^\{|\}$/g, '');
+        if (inner === '表单名称') return formName || workflowName || '审批流程';
+        if (inner === '流程名称') return workflowName || formName || '审批流程';
+        if (inner === '节点名称') return String(params.nodeLabel || '审批节点');
+        if (inner === '记录ID') return String(params.recordId || '');
+        if (inner === '提交人') return submitterName;
+        if (inner === '更新时间') return updatedAtText;
+        if (Object.prototype.hasOwnProperty.call(formValues, inner)) {
+          const v = formValues[inner];
+          if (v == null) return '';
+          return Array.isArray(v) ? v.join('、') : String(v);
+        }
+        return token;
+      };
+
+      const renderTemplate = (tpl: string) =>
+        String(tpl || '').replace(/\{[^{}]+\}/g, (m) => resolveToken(m));
+
+      const messageLines: string[] = [];
+      if (dingtalkMessageContent) {
+        messageLines.push(renderTemplate(dingtalkMessageContent));
+      }
+      const effectiveRows = dingtalkMessageFormFields.length
+        ? dingtalkMessageFormFields
+        : [
+            { label: '表单名称', token: '{表单名称}' },
+            { label: '流程名称', token: '{流程名称}' },
+            { label: '提交时间', token: '{更新时间}' },
+          ];
+      effectiveRows.forEach((row) => {
+        const label = String(row?.label || '').trim();
+        const token = String(row?.token || '').trim();
+        if (!label || !token) return;
+        messageLines.push(`${label}：${resolveToken(token)}`);
+      });
+      if (dingtalkAppendRemark && dingtalkRemarkTemplate) {
+        messageLines.push(renderTemplate(dingtalkRemarkTemplate));
+      }
+      const todoDescription = messageLines.filter(Boolean).join('\n') || `流程记录：${params.recordId}`;
+
       const created = await this.dingtalkService.addToDoTask({
         appKey: String(ding.appKey),
         appSecret: String(ding.appSecret),
         creatorUnionId,
         executorUnionIds,
         title: todoTitle,
-        description: `流程记录：${params.recordId}`,
+        description: todoDescription,
         sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
         sourceUrl: detailUrl,
       });

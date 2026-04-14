@@ -429,6 +429,24 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
     [emitFlowMetaChange, flowMeta],
   );
 
+  const normalizedMessageFormFields = useMemo(() => {
+    const raw =
+      ((flowMeta?.dingtalk?.messageFormFields as Array<{ label?: string; token?: string }>) || []).slice();
+    const defaults = [
+      { label: "表单名称", token: "{表单名称}" },
+      { label: "提交时间", token: "{更新时间}" },
+    ];
+    const source = raw.length ? raw : defaults;
+    return source.map((item) => {
+      const token = String(item?.token || "").trim();
+      const hit = dingtalkFieldTokenOptions.find((opt) => opt.key === token);
+      const labelRaw = String(item?.label || "").trim();
+      const label =
+        !labelRaw || /^field_\d+$/i.test(labelRaw) ? hit?.name || labelRaw || token.replace(/[{}]/g, "") : labelRaw;
+      return { label, token };
+    });
+  }, [flowMeta?.dingtalk?.messageFormFields, dingtalkFieldTokenOptions]);
+
   const { data: roleList = [] } = useQuery({
     queryKey: ["roles", "forProcessDesigner"],
     queryFn: () => roleApi.list(),
@@ -1733,10 +1751,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                           </Form.Item>
                           <Form.Item label="消息表单内容">
                             <Space direction="vertical" style={{ width: "100%" }}>
-                              {((flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [
-                                { label: "表单名称", token: "{表单名称}" },
-                                { label: "提交时间", token: "{更新时间}" },
-                              ]).map((item, idx) => (
+                              {normalizedMessageFormFields.map((item, idx) => (
                                 <div
                                   key={`${item.token}-${idx}`}
                                   style={{
@@ -1757,7 +1772,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                       style={{ padding: 0 }}
                                       onClick={() => {
                                         const current =
-                                          (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                          normalizedMessageFormFields;
                                         mergeDingtalkMeta({
                                           messageFormFields: current.filter((_, i) => i !== idx),
                                         });
@@ -1770,7 +1785,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                     value={item.label}
                                     onChange={(e) => {
                                       const current =
-                                        (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                        normalizedMessageFormFields;
                                       const next = [...current];
                                       next[idx] = { ...next[idx], label: e.target.value };
                                       mergeDingtalkMeta({ messageFormFields: next });
@@ -1782,7 +1797,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                       items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
                                       onClick: ({ key }) => {
                                         const current =
-                                          (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                          normalizedMessageFormFields;
                                         const next = [...current];
                                         const hit = dingtalkFieldTokenOptions.find((opt) => opt.key === String(key));
                                         next[idx] = {
@@ -1807,7 +1822,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                   onClick: ({ key }) => {
                                     const token = String(key);
                                     const current =
-                                      (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                      normalizedMessageFormFields;
                                     const exists = current.some((x) => x.token === token);
                                     if (exists) return;
                                     const hit = dingtalkFieldTokenOptions.find((opt) => opt.key === token);
@@ -1907,10 +1922,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                               {String(flowMeta?.dingtalk?.messageContent || "")}
                             </div>
                           ) : null}
-                          {((flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [
-                            { label: "表单名称", token: "{表单名称}" },
-                            { label: "提交时间", token: "{更新时间}" },
-                          ]).map((item, idx) => (
+                          {normalizedMessageFormFields.map((item, idx) => (
                             <div key={`${item.token}-preview-${idx}`} style={{ color: "#666", marginBottom: 6 }}>
                               {item.label}：{`{${item.label}}`}
                             </div>
