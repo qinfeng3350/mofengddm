@@ -178,7 +178,7 @@ const ResizableDrawer: React.FC<React.ComponentProps<typeof Drawer>> = (props) =
   return (
     <Drawer
       {...props}
-      width={width}
+      size={width as any}
       style={{ ...(props.style || {}), position: "relative" }}
     >
       {props.children}

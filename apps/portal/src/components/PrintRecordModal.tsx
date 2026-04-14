@@ -146,7 +146,7 @@ export const PrintRecordModal: React.FC<PrintRecordModalProps> = ({
             打印
           </Button>,
         ]}
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
           {isLoading ? (
