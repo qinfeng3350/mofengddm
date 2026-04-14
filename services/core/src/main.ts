@@ -5,6 +5,8 @@ import { join } from 'path';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function bootstrap() {
   const startTime = Date.now();
   
@@ -176,17 +178,31 @@ async function bootstrap() {
     console.log(`⏱️  启动耗时: ${startupTime}ms`);
   }
   
-  try {
-    await app.listen(port);
-    
-    if (!isProduction) {
-      const totalTime = Date.now() - startTime;
-      console.log(`✅ 服务已就绪，总耗时: ${totalTime}ms`);
-      console.log(`📡 API 地址: http://localhost:${port}/api`);
+  // watch 模式下进程热重启时，旧实例可能会短暂占用端口，做短重试避免误报 EADDRINUSE。
+  const maxListenRetries = isProduction ? 1 : 8;
+  let listenAttempt = 0;
+  while (listenAttempt < maxListenRetries) {
+    try {
+      await app.listen(port);
+      if (!isProduction) {
+        const totalTime = Date.now() - startTime;
+        console.log(`✅ 服务已就绪，总耗时: ${totalTime}ms`);
+        console.log(`📡 API 地址: http://localhost:${port}/api`);
+      }
+      break;
+    } catch (error: any) {
+      const isAddrInUse = error?.code === 'EADDRINUSE';
+      listenAttempt += 1;
+      if (!isAddrInUse || listenAttempt >= maxListenRetries) {
+        console.error('❌ 服务启动失败:', error);
+        process.exit(1);
+      }
+      const waitMs = 400 * listenAttempt;
+      console.warn(
+        `⚠️ 端口 ${port} 仍被占用（第 ${listenAttempt}/${maxListenRetries} 次重试），${waitMs}ms 后重试...`,
+      );
+      await sleep(waitMs);
     }
-  } catch (error) {
-    console.error('❌ 服务启动失败:', error);
-    process.exit(1);
   }
 }
 
