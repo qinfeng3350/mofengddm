@@ -642,6 +642,17 @@ export class WorkflowService {
             where: { tenantId: params.tenantId, formId },
           });
           formName = String(formDef?.formName || '').trim();
+          const workflowMetaFromDefinition: any =
+            (formDef as any)?.config?.workflow?.metadata?.dingtalk || {};
+          if (!todoTitleTemplate) {
+            todoTitleTemplate = String(workflowMetaFromDefinition?.todoTitleTemplate || '').trim();
+          }
+          if (workflowMetaFromDefinition?.enabled === false) {
+            dingtalkEnabled = false;
+          }
+          if (workflowMetaFromDefinition?.todoEnabled === false) {
+            dingtalkTodoEnabled = false;
+          }
         }
       } catch (e) {
         // 解析失败不影响主流程，fallback 到基础待办标题/链接
@@ -662,9 +673,9 @@ export class WorkflowService {
         return null;
       }
 
-      const detailUrl = `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
+      const detailUrl = `${portalBaseUrl}/?todoRecordId=${encodeURIComponent(
         params.recordId,
-      )}${formId ? `&formId=${encodeURIComponent(formId)}` : ''}`;
+      )}${formId ? `&todoFormId=${encodeURIComponent(formId)}` : ''}`;
 
       todoTitle = todoTitleTemplate
         ? todoTitleTemplate

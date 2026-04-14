@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
 import {
@@ -52,7 +52,7 @@ import {
   CustomerServiceOutlined,
   CloseOutlined,
 } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { applicationApi } from "@/api/application";
 import { workflowApi } from "@/api/workflow";
 import { CreateAppModal } from "@/components/CreateAppModal";
@@ -71,8 +71,21 @@ const WORKBENCH_STORAGE_KEY = "portal-workbench-selection";
 export const HomePage = () => {
   usePageTitle("应用管理 - 墨枫低代码平台");
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, clearAuth } = useAuthStore();
   const isMobile = useIsMobile();
+
+  useEffect(() => {
+    const todoRecordId = searchParams.get("todoRecordId");
+    if (!todoRecordId) return;
+    const todoFormId = searchParams.get("todoFormId");
+    const next = new URLSearchParams();
+    next.set("recordId", todoRecordId);
+    if (todoFormId) next.set("formId", todoFormId);
+    navigate(`/runtime/list?${next.toString()}`, { replace: true });
+    // 清理首页 URL 参数，避免返回首页时重复跳转
+    setSearchParams(new URLSearchParams(), { replace: true });
+  }, [navigate, searchParams, setSearchParams]);
   
   // 获取当前用户信息（包括租户信息）
   const { data: currentUserInfo, refetch: refetchUserInfo } = useQuery({

@@ -401,16 +401,17 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
 
   const dingtalkFieldTokenOptions = useMemo(
     () => [
-      { key: "{表单名称}", label: "{表单名称}" },
-      { key: "{流程名称}", label: "{流程名称}" },
-      { key: "{节点名称}", label: "{节点名称}" },
-      { key: "{记录ID}", label: "{记录ID}" },
-      { key: "{提交人}", label: "{提交人}" },
-      { key: "{更新时间}", label: "{更新时间}" },
+      { key: "{表单名称}", label: "表单名称", name: "表单名称" },
+      { key: "{流程名称}", label: "流程名称", name: "流程名称" },
+      { key: "{节点名称}", label: "节点名称", name: "节点名称" },
+      { key: "{记录ID}", label: "记录ID", name: "记录ID" },
+      { key: "{提交人}", label: "提交人", name: "提交人" },
+      { key: "{更新时间}", label: "更新时间", name: "更新时间" },
       ...((formFields || []).map((f) => ({
         key: `{${String(f.fieldId)}}`,
-        label: `${f.label || f.fieldId} {${String(f.fieldId)}}`,
-      })) as Array<{ key: string; label: string }>),
+        label: String(f.label || f.fieldId),
+        name: String(f.label || f.fieldId),
+      })) as Array<{ key: string; label: string; name: string }>),
     ],
     [formFields],
   );
@@ -1783,10 +1784,11 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                         const current =
                                           (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
                                         const next = [...current];
+                                        const hit = dingtalkFieldTokenOptions.find((opt) => opt.key === String(key));
                                         next[idx] = {
                                           ...next[idx],
                                           token: String(key),
-                                          label: String(key).replace(/[{}]/g, ""),
+                                          label: hit?.name || String(key).replace(/[{}]/g, ""),
                                         };
                                         mergeDingtalkMeta({ messageFormFields: next });
                                       },
@@ -1808,8 +1810,12 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
                                       (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
                                     const exists = current.some((x) => x.token === token);
                                     if (exists) return;
+                                    const hit = dingtalkFieldTokenOptions.find((opt) => opt.key === token);
                                     mergeDingtalkMeta({
-                                      messageFormFields: [...current, { label: token.replace(/[{}]/g, ""), token }],
+                                      messageFormFields: [
+                                        ...current,
+                                        { label: hit?.name || token.replace(/[{}]/g, ""), token },
+                                      ],
                                     });
                                   },
                                 }}
