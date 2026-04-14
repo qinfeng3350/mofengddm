@@ -33,6 +33,7 @@ import {
   Select, 
   Divider, 
   Tabs,
+  Dropdown,
   message,
 } from "antd";
 import { 
@@ -346,12 +347,86 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
   const [editForm] = Form.useForm();
   const [activeTab, setActiveTab] = useState("basic");
   const [rightPanelTab, setRightPanelTab] = useState<"node" | "flow">("node");
+  const [flowMeta, setFlowMeta] = useState<Record<string, any>>(
+    (value?.metadata as Record<string, any>) || {},
+  );
+  const [dingtalkModalOpen, setDingtalkModalOpen] = useState(false);
   const [approverModalOpen, setApproverModalOpen] = useState(false);
   const [approverTab, setApproverTab] = useState("user");
   const [tempApproverType, setTempApproverType] = useState<AssigneeType>("initiator");
   const [tempApproverValues, setTempApproverValues] = useState<string[]>([]);
   const [tempFormFieldId, setTempFormFieldId] = useState<string>("");
   const [selectedDeptIdForUserTab, setSelectedDeptIdForUserTab] = useState<string>("");
+
+  useEffect(() => {
+    setFlowMeta((value?.metadata as Record<string, any>) || {});
+  }, [value?.workflowId, value?.version]);
+
+  const emitFlowMetaChange = useCallback(
+    (nextMeta: Record<string, any>) => {
+      setFlowMeta(nextMeta);
+      if (!onChange) return;
+      onChange({
+        workflowId: value?.workflowId || "wf_" + Date.now(),
+        workflowName: value?.workflowName || "流程",
+        version: value?.version || 1,
+        nodes: nodes.map((node) => {
+          const nodeData = node.data as WorkflowNodeData;
+          return {
+            nodeId: node.id,
+            type: nodeData.type,
+            label: nodeData.label,
+            position: node.position,
+            assignees: nodeData.assignees,
+            config: {
+              approvalMode: nodeData.approvalMode,
+              conditions: nodeData.conditions,
+              timeout: nodeData.timeout,
+              ...nodeData.config,
+            },
+          };
+        }),
+        edges: edges.map((edge) => ({
+          edgeId: edge.id,
+          source: edge.source,
+          target: edge.target,
+          condition: undefined,
+          config: { label: edge.label || "" },
+        })),
+        metadata: nextMeta,
+      });
+    },
+    [nodes, edges, onChange, value],
+  );
+
+  const dingtalkFieldTokenOptions = useMemo(
+    () => [
+      { key: "{表单名称}", label: "{表单名称}" },
+      { key: "{流程名称}", label: "{流程名称}" },
+      { key: "{节点名称}", label: "{节点名称}" },
+      { key: "{记录ID}", label: "{记录ID}" },
+      { key: "{提交人}", label: "{提交人}" },
+      { key: "{更新时间}", label: "{更新时间}" },
+      ...((formFields || []).map((f) => ({
+        key: `{${String(f.fieldId)}}`,
+        label: `${f.label || f.fieldId} {${String(f.fieldId)}}`,
+      })) as Array<{ key: string; label: string }>),
+    ],
+    [formFields],
+  );
+
+  const mergeDingtalkMeta = useCallback(
+    (patch: Record<string, any>) => {
+      emitFlowMetaChange({
+        ...(flowMeta || {}),
+        dingtalk: {
+          ...(flowMeta?.dingtalk || {}),
+          ...patch,
+        },
+      });
+    },
+    [emitFlowMetaChange, flowMeta],
+  );
 
   const { data: roleList = [] } = useQuery({
     queryKey: ["roles", "forProcessDesigner"],
@@ -770,11 +845,11 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
       version: value?.version || 1,
       nodes: workflowNodes,
       edges: workflowEdges,
-      metadata: value?.metadata || {},
+      metadata: flowMeta || {},
     };
     
     onChange(wf);
-  }, [nodes, edges, onChange, value]);
+  }, [nodes, edges, onChange, value, flowMeta]);
 
   // 删除节点
   const handleDeleteNode = useCallback(() => {
@@ -918,7 +993,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
         version: value?.version || 1,
         nodes: workflowNodes,
         edges: workflowEdges,
-        metadata: value?.metadata || {},
+        metadata: flowMeta || {},
       };
       
       onChange(wf);
@@ -929,7 +1004,7 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [nodes, edges, onChange, value]);
+  }, [nodes, edges, onChange, value, flowMeta]);
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#f7f8fa" }}>
@@ -1560,9 +1635,289 @@ export const ProcessDesigner = ({ value, onChange, formFields = [] }: ProcessDes
               </Modal>
               </>
               ) : (
-                <div style={{ fontSize: 12, color: "#666", paddingTop: 8 }}>
-                  流程属性功能将继续补齐（流程名称、发起权限、全局规则）。
-                </div>
+                <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ fontSize: 14, fontWeight: 600 }}>接入钉钉审批套件</Text>
+                    <Checkbox
+                      checked={flowMeta?.dingtalk?.enabled !== false}
+                      onChange={(e) => {
+                        emitFlowMetaChange({
+                          ...(flowMeta || {}),
+                          dingtalk: {
+                            ...(flowMeta?.dingtalk || {}),
+                            enabled: e.target.checked,
+                          },
+                        });
+                      }}
+                    />
+                  </div>
+                  <Divider style={{ margin: "6px 0" }} />
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>流程提醒</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <Checkbox
+                      checked={flowMeta?.dingtalk?.todoEnabled !== false}
+                      onChange={(e) => {
+                        emitFlowMetaChange({
+                          ...(flowMeta || {}),
+                          dingtalk: {
+                            ...(flowMeta?.dingtalk || {}),
+                            todoEnabled: e.target.checked,
+                          },
+                        });
+                      }}
+                    >
+                      钉钉提醒
+                    </Checkbox>
+                    <Button type="link" onClick={() => setDingtalkModalOpen(true)} style={{ paddingInline: 0 }}>
+                      钉钉设置
+                    </Button>
+                  </div>
+                  <Modal
+                    title="钉钉设置"
+                    open={dingtalkModalOpen}
+                    onCancel={() => setDingtalkModalOpen(false)}
+                    onOk={() => setDingtalkModalOpen(false)}
+                    okText="保存"
+                    cancelText="取消"
+                    width={1180}
+                  >
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, minHeight: 560 }}>
+                      <div style={{ borderRight: "1px solid #f0f0f0", paddingRight: 20 }}>
+                        <Form layout="vertical">
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            请在这里制作钉钉模板
+                          </Text>
+                          <Form.Item label="标题（必填）" style={{ marginTop: 12 }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 88px", gap: 12 }}>
+                              <Input
+                                value={String(flowMeta?.dingtalk?.todoTitleTemplate || "您有一条新的待办任务，请及时处理")}
+                                onChange={(e) => mergeDingtalkMeta({ todoTitleTemplate: e.target.value })}
+                              />
+                              <Dropdown
+                                menu={{
+                                  items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
+                                  onClick: ({ key }) =>
+                                    mergeDingtalkMeta({
+                                      todoTitleTemplate: `${String(
+                                        flowMeta?.dingtalk?.todoTitleTemplate || "您有一条新的待办任务，请及时处理",
+                                      )}${String(key)}`,
+                                    }),
+                                }}
+                                trigger={["click"]}
+                              >
+                                <Button type="link" style={{ paddingInline: 0, textAlign: "left" }}>+ 添加字段</Button>
+                              </Dropdown>
+                            </div>
+                          </Form.Item>
+                          <Form.Item label="消息内容">
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 88px", gap: 12 }}>
+                              <Input.TextArea
+                                rows={3}
+                                value={String(flowMeta?.dingtalk?.messageContent || "")}
+                                onChange={(e) => mergeDingtalkMeta({ messageContent: e.target.value })}
+                              />
+                              <Dropdown
+                                menu={{
+                                  items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
+                                  onClick: ({ key }) =>
+                                    mergeDingtalkMeta({
+                                      messageContent: `${String(flowMeta?.dingtalk?.messageContent || "")}${String(key)}`,
+                                    }),
+                                }}
+                                trigger={["click"]}
+                              >
+                                <Button type="link" style={{ paddingInline: 0, textAlign: "left" }}>+ 添加字段</Button>
+                              </Dropdown>
+                            </div>
+                          </Form.Item>
+                          <Form.Item label="消息表单内容">
+                            <Space direction="vertical" style={{ width: "100%" }}>
+                              {((flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [
+                                { label: "表单名称", token: "{表单名称}" },
+                                { label: "提交时间", token: "{更新时间}" },
+                              ]).map((item, idx) => (
+                                <div
+                                  key={`${item.token}-${idx}`}
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "28px 1fr 1fr 88px",
+                                    gap: 8,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <Space size={4}>
+                                    <Button type="link" size="small" style={{ padding: 0, color: "#1677ff" }}>
+                                      ↕
+                                    </Button>
+                                    <Button
+                                      type="link"
+                                      size="small"
+                                      danger
+                                      style={{ padding: 0 }}
+                                      onClick={() => {
+                                        const current =
+                                          (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                        mergeDingtalkMeta({
+                                          messageFormFields: current.filter((_, i) => i !== idx),
+                                        });
+                                      }}
+                                    >
+                                      🗑
+                                    </Button>
+                                  </Space>
+                                  <Input
+                                    value={item.label}
+                                    onChange={(e) => {
+                                      const current =
+                                        (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                      const next = [...current];
+                                      next[idx] = { ...next[idx], label: e.target.value };
+                                      mergeDingtalkMeta({ messageFormFields: next });
+                                    }}
+                                  />
+                                  <Input value={item.token} readOnly />
+                                  <Dropdown
+                                    menu={{
+                                      items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
+                                      onClick: ({ key }) => {
+                                        const current =
+                                          (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                        const next = [...current];
+                                        next[idx] = {
+                                          ...next[idx],
+                                          token: String(key),
+                                          label: String(key).replace(/[{}]/g, ""),
+                                        };
+                                        mergeDingtalkMeta({ messageFormFields: next });
+                                      },
+                                    }}
+                                    trigger={["click"]}
+                                  >
+                                    <Button type="link" style={{ paddingInline: 0, textAlign: "left" }}>
+                                      + 添加字段
+                                    </Button>
+                                  </Dropdown>
+                                </div>
+                              ))}
+                              <Dropdown
+                                menu={{
+                                  items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
+                                  onClick: ({ key }) => {
+                                    const token = String(key);
+                                    const current =
+                                      (flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [];
+                                    const exists = current.some((x) => x.token === token);
+                                    if (exists) return;
+                                    mergeDingtalkMeta({
+                                      messageFormFields: [...current, { label: token.replace(/[{}]/g, ""), token }],
+                                    });
+                                  },
+                                }}
+                                trigger={["click"]}
+                              >
+                                <Button type="link" style={{ paddingInline: 0, textAlign: "left" }}>+ 添加内容</Button>
+                              </Dropdown>
+                            </Space>
+                          </Form.Item>
+                          <Form.Item label="备注">
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 88px", gap: 12 }}>
+                              <Input.TextArea
+                                rows={2}
+                                value={String(flowMeta?.dingtalk?.remark || "由 {提交人} 提交")}
+                                onChange={(e) => mergeDingtalkMeta({ remark: e.target.value })}
+                              />
+                              <Dropdown
+                                menu={{
+                                  items: dingtalkFieldTokenOptions.map((it) => ({ key: it.key, label: it.label })),
+                                  onClick: ({ key }) =>
+                                    mergeDingtalkMeta({
+                                      remark: `${String(flowMeta?.dingtalk?.remark || "由 {提交人} 提交")}${String(key)}`,
+                                    }),
+                                }}
+                                trigger={["click"]}
+                              >
+                                <Button type="link" style={{ paddingInline: 0, textAlign: "left" }}>+ 添加字段</Button>
+                              </Dropdown>
+                            </div>
+                          </Form.Item>
+                          <Form.Item label="颜色设置">
+                            <Radio.Group
+                              value={String(flowMeta?.dingtalk?.themeColor || "highlight")}
+                              onChange={(e) => mergeDingtalkMeta({ themeColor: e.target.value })}
+                            >
+                              <Radio value="black">黑色</Radio>
+                              <Radio value="gray">灰色</Radio>
+                              <Radio value="highlight">高亮</Radio>
+                            </Radio.Group>
+                          </Form.Item>
+                          <Form.Item>
+                            <Checkbox
+                              checked={flowMeta?.dingtalk?.appendRemark !== false}
+                              onChange={(e) => mergeDingtalkMeta({ appendRemark: e.target.checked })}
+                            >
+                              流程简报添加到备注
+                            </Checkbox>
+                          </Form.Item>
+                          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 18 }}>
+                            <Button>测试</Button>
+                            <Button
+                              type="primary"
+                              ghost
+                              onClick={() =>
+                                mergeDingtalkMeta({
+                                  todoTitleTemplate: "您有一条新的待办任务，请及时处理",
+                                  messageContent: "",
+                                  messageFormFields: [
+                                    { label: "表单名称", token: "{表单名称}" },
+                                    { label: "提交时间", token: "{更新时间}" },
+                                  ],
+                                  remark: "由 {提交人} 提交",
+                                  themeColor: "highlight",
+                                  appendRemark: true,
+                                })
+                              }
+                            >
+                              恢复默认
+                            </Button>
+                          </div>
+                        </Form>
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600, marginBottom: 10 }}>填写样式预览</div>
+                        <div
+                          style={{
+                            border: "1px solid #e5e7eb",
+                            borderRadius: 8,
+                            minHeight: 380,
+                            padding: 14,
+                            background: "#fff",
+                          }}
+                        >
+                          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
+                            {String(flowMeta?.dingtalk?.todoTitleTemplate || "您有一条新的待办任务，请及时处理")}
+                          </div>
+                          {String(flowMeta?.dingtalk?.messageContent || "").trim() ? (
+                            <div style={{ color: "#666", marginBottom: 10, whiteSpace: "pre-wrap" }}>
+                              {String(flowMeta?.dingtalk?.messageContent || "")}
+                            </div>
+                          ) : null}
+                          {((flowMeta?.dingtalk?.messageFormFields as Array<{ label: string; token: string }>) || [
+                            { label: "表单名称", token: "{表单名称}" },
+                            { label: "提交时间", token: "{更新时间}" },
+                          ]).map((item, idx) => (
+                            <div key={`${item.token}-preview-${idx}`} style={{ color: "#666", marginBottom: 6 }}>
+                              {item.label}：{item.token}
+                            </div>
+                          ))}
+                          <div style={{ marginBottom: 8 }} />
+                          <div style={{ color: "#d97706" }}>
+                            {String(flowMeta?.dingtalk?.remark || "由 {提交人} 提交")}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Modal>
+                </Space>
               )}
             </Card>
           ) : (

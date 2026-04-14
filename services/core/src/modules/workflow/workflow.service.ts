@@ -592,6 +592,7 @@ export class WorkflowService {
       return null;
     }
 
+    let todoTitle = `待办：${params.nodeLabel}`;
     try {
       console.log('[WorkflowService] 推送钉钉待办 v1.0 todo', {
         tenantId: params.tenantId,
@@ -618,43 +619,67 @@ export class WorkflowService {
         return null;
       }
 
-      // DingTalk 待办链接必须指向“前端真实存在的记录列表入口”
-      // 当前前端路由为：/app/:appId（RuntimeListPage）
-      // 需要通过 workflow_instance.recordId -> formId -> form_definition.application_id 解析出 appId
-      let appId: string | null = null;
+      // DingTalk 待办点击后应直达审批处理页（runtime/list 的记录详情）
+      let formId: string | null = null;
+      let formName = '';
+      let workflowName = '';
+      let todoTitleTemplate = '';
+      let dingtalkEnabled = true;
+      let dingtalkTodoEnabled = true;
       try {
         const inst = await this.instanceRepo.findOne({
           where: { tenantId: params.tenantId, recordId: params.recordId },
         });
-        if (inst?.formId) {
+        formId = inst?.formId ? String(inst.formId) : null;
+        const def: any = inst?.definition || {};
+        const meta: any = def?.metadata || {};
+        workflowName = String(def?.workflowName || '').trim();
+        todoTitleTemplate = String(meta?.dingtalk?.todoTitleTemplate || '').trim();
+        dingtalkEnabled = meta?.dingtalk?.enabled !== false;
+        dingtalkTodoEnabled = meta?.dingtalk?.todoEnabled !== false;
+        if (formId) {
           const formDef = await this.formRepo.findOne({
-            where: { tenantId: params.tenantId, formId: inst.formId },
+            where: { tenantId: params.tenantId, formId },
           });
-          appId = formDef?.applicationId ? String(formDef.applicationId) : null;
+          formName = String(formDef?.formName || '').trim();
         }
       } catch (e) {
-        // 解析失败不影响主流程，fallback 到原来的 runtime/list（但可能 404）
-        console.warn('[WorkflowService] 解析 appId 失败，使用 fallback runtime/list', {
+        // 解析失败不影响主流程，fallback 到基础待办标题/链接
+        console.warn('[WorkflowService] 解析流程实例配置失败，使用默认待办标题/链接', {
           tenantId: params.tenantId,
           recordId: params.recordId,
           error: e instanceof Error ? e.message : String(e),
         });
       }
 
-      const detailUrl = appId
-        ? `${portalBaseUrl}/app/${encodeURIComponent(appId)}?recordId=${encodeURIComponent(
-            params.recordId,
-          )}`
-        : `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
-            params.recordId,
-          )}`;
+      if (!dingtalkEnabled || !dingtalkTodoEnabled) {
+        console.warn('[WorkflowService] 跳过钉钉待办推送：流程配置中已关闭钉钉提醒', {
+          tenantId: params.tenantId,
+          recordId: params.recordId,
+          dingtalkEnabled,
+          dingtalkTodoEnabled,
+        });
+        return null;
+      }
+
+      const detailUrl = `${portalBaseUrl}/runtime/list?recordId=${encodeURIComponent(
+        params.recordId,
+      )}${formId ? `&formId=${encodeURIComponent(formId)}` : ''}`;
+
+      todoTitle = todoTitleTemplate
+        ? todoTitleTemplate
+            .replace(/\{表单名称\}/g, formName || workflowName || '审批流程')
+            .replace(/\{流程名称\}/g, workflowName || formName || '审批流程')
+            .replace(/\{节点名称\}/g, String(params.nodeLabel || '审批节点'))
+            .replace(/\{记录ID\}/g, String(params.recordId || ''))
+        : `待办：${params.nodeLabel}`;
 
       const created = await this.dingtalkService.addToDoTask({
         appKey: String(ding.appKey),
         appSecret: String(ding.appSecret),
         creatorUnionId,
         executorUnionIds,
-        title: `待办：${params.nodeLabel}`,
+        title: todoTitle,
         description: `流程记录：${params.recordId}`,
         sourceIdentifier: `wf_${params.tenantId}_${params.taskId}`,
         sourceUrl: detailUrl,
@@ -669,7 +694,7 @@ export class WorkflowService {
           operationType: '发送消息',
           triggerType: '钉钉待办',
           relatedObject: params.recordId,
-          content: `待办：${params.nodeLabel}`,
+          content: todoTitle,
           detail: `推送成功 taskId=${created.id}`,
           ip: '127.0.0.1',
         });
@@ -704,7 +729,7 @@ export class WorkflowService {
         triggerType: '钉钉待办',
         errorType: '发送失败',
         relatedObject: params.recordId,
-        content: `待办：${params.nodeLabel}`,
+        content: todoTitle,
         detail: err?.message || '钉钉待办推送失败',
         ip: '127.0.0.1',
       });
@@ -712,7 +737,7 @@ export class WorkflowService {
     }
   }
 
-  async start(params: { tenantId: string; formId: string; recordId: string; workflow: { nodes: WorkflowNode[]; edges: WorkflowEdge[]; workflowId?: string; workflowName?: string }; userId?: string; userName?: string }) {
+  async start(params: { tenantId: string; formId: string; recordId: string; workflow: { nodes: WorkflowNode[]; edges: WorkflowEdge[]; workflowId?: string; workflowName?: string; metadata?: Record<string, unknown> }; userId?: string; userName?: string }) {
     const { tenantId, formId, recordId, workflow, userId, userName } = params;
     const startNode = workflow.nodes.find(n => n.type === 'start');
     if (!startNode) throw new BadRequestException('流程未包含开始节点');
@@ -728,7 +753,12 @@ export class WorkflowService {
       workflowId: workflow.workflowId || `wf_${Date.now()}`,
       status: 'running',
       currentNodeId: nextNodeId || undefined,
-      definition: { nodes: workflow.nodes, edges: workflow.edges },
+      definition: {
+        workflowName: (workflow as any)?.workflowName || '',
+        nodes: workflow.nodes,
+        edges: workflow.edges,
+        metadata: (workflow as any)?.metadata || {},
+      },
       tasks: [],
       history: [
         {
