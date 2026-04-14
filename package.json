@@ -17,6 +17,8 @@
     "start:prod": "pnpm --filter core run start:prod",
     "prestart:bt": "node scripts/free-ports.js 4000",
     "start:bt": "pnpm --filter core run start:prod",
+    "bt:build": "NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter portal build && pnpm --filter core build",
+    "bt:run": "pnpm run bt:build && pnpm run start:bt",
     "install:all": "pnpm install",
     "clean": "pnpm --filter core clean && pnpm --filter portal clean",
     "clean:dist": "rm -rf services/core/dist apps/portal/dist",
