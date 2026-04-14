@@ -451,11 +451,10 @@ export const FormRenderer = ({
       // 正式提交且配置了流程：无实例则发起，已有实例则不重复（编辑暂存后再提交常见）
       if (status === "submitted" && hasWorkflow && wf && rid) {
         try {
-          await workflowApi.getInstanceByRecord(rid);
-          message.info("当前记录已存在流程实例，未重复发起");
-        } catch (e: unknown) {
-          const st = (e as { response?: { status?: number } })?.response?.status;
-          if (st === 404) {
+          const existing = await workflowApi.getInstanceByRecord(rid);
+          if (existing?.id || existing?.instanceId) {
+            message.info("当前记录已存在流程实例，未重复发起");
+          } else {
             try {
               await workflowApi.startInstance({
                 formId,
@@ -476,10 +475,10 @@ export const FormRenderer = ({
               })();
               message.error(msg || "启动流程失败，请稍后重试或联系管理员");
             }
-          } else {
-            console.error("查询流程实例失败:", e);
-            message.warning("无法确认流程状态，请保存后刷新详情页查看流程");
           }
+        } catch (e: unknown) {
+          console.error("查询流程实例失败:", e);
+          message.warning("无法确认流程状态，请保存后刷新详情页查看流程");
         }
       }
 

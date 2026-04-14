@@ -750,6 +750,41 @@ export class WorkflowService {
         ? new Date(formData.updatedAt as any).toLocaleString('zh-CN', { hour12: false })
         : new Date().toLocaleString('zh-CN', { hour12: false });
 
+      const stringifyFieldValue = (value: any): string => {
+        if (value == null) return '';
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          return String(value);
+        }
+        if (Array.isArray(value)) {
+          if (value.length === 0) return '';
+          return value
+            .map((item) => {
+              if (item == null) return '';
+              if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+                return String(item);
+              }
+              if (typeof item === 'object') {
+                const obj = item as Record<string, any>;
+                const parts = Object.values(obj)
+                  .filter((x) => x != null && x !== '')
+                  .map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x)));
+                return parts.join(' / ');
+              }
+              return String(item);
+            })
+            .filter(Boolean)
+            .join('；');
+        }
+        if (typeof value === 'object') {
+          try {
+            return JSON.stringify(value);
+          } catch {
+            return String(value);
+          }
+        }
+        return String(value);
+      };
+
       const resolveToken = (tokenRaw: string) => {
         const token = String(tokenRaw || '').trim();
         if (!token) return '';
@@ -762,11 +797,9 @@ export class WorkflowService {
         if (inner === '更新时间') return updatedAtText;
         const mappedFieldId = formFieldTokenMap.get(inner) || formFieldTokenMap.get(`{${inner}}`) || inner;
         if (Object.prototype.hasOwnProperty.call(formValues, mappedFieldId)) {
-          const v = formValues[mappedFieldId];
-          if (v == null) return '';
-          return Array.isArray(v) ? v.join('、') : String(v);
+          return stringifyFieldValue(formValues[mappedFieldId]);
         }
-        return token;
+        return '';
       };
 
       const renderTemplate = (tpl: string) =>
@@ -787,19 +820,18 @@ export class WorkflowService {
         const label = String(row?.label || '').trim();
         const token = String(row?.token || '').trim();
         if (!label || !token) return;
-        messageLines.push(`${label}：${resolveToken(token)}`);
+        const value = resolveToken(token);
+        if (!value) return;
+        messageLines.push(`${label}：${value}`);
       });
       if (dingtalkAppendRemark && dingtalkRemarkTemplate) {
-        messageLines.push(renderTemplate(dingtalkRemarkTemplate));
+        const renderedRemark = renderTemplate(dingtalkRemarkTemplate).trim();
+        if (renderedRemark) {
+          messageLines.push(renderedRemark);
+        }
       }
       const todoDescription = messageLines.filter(Boolean).join('\n') || `流程记录：${params.recordId}`;
-      const renderedTitle = todoTitleTemplate
-        ? todoTitleTemplate
-            .replace(/\{表单名称\}/g, formName || workflowName || '审批流程')
-            .replace(/\{流程名称\}/g, workflowName || formName || '审批流程')
-            .replace(/\{节点名称\}/g, String(params.nodeLabel || '审批节点'))
-            .replace(/\{记录ID\}/g, String(params.recordId || ''))
-        : '';
+      const renderedTitle = todoTitleTemplate ? renderTemplate(todoTitleTemplate).trim() : '';
       // 标题兜底带上核心信息，避免待办列表里只看到笼统文案
       todoTitle = (renderedTitle || `待办：${formName || workflowName || params.nodeLabel}`)
         .replace(/\s+/g, ' ')
@@ -974,8 +1006,8 @@ export class WorkflowService {
     if (!inst) {
       inst = await this.instanceRepo.findOne({ where: { recordId }, order: { id: 'DESC' } });
     }
-    if (!inst) throw new NotFoundException('流程实例不存在');
-    return inst;
+    // 不存在时返回 null，避免前端“先探测再创建”场景触发 404 噪音
+    return inst || null;
   }
 
   async listTasks(tenantId: string, options?: { status?: 'pending' | 'completed'; userId?: string }) {
