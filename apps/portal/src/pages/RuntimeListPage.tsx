@@ -1472,8 +1472,8 @@ export const RuntimeListPage = () => {
           placement="left"
           open={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}
-          width={300}
-          destroyOnClose
+          size={300 as any}
+          destroyOnHidden
           bodyStyle={{ padding: 0 }}
         >
           <div style={{ padding: 16, borderBottom: "1px solid #f0f0f0" }}>
@@ -2839,7 +2839,7 @@ export const RuntimeListPage = () => {
           setFormDrawerOpen(false);
           setEditingRecordId(null);
         }}
-        destroyOnClose
+        destroyOnHidden
       >
           {selectedFormId && (
           <FormRenderer
@@ -2865,7 +2865,7 @@ export const RuntimeListPage = () => {
           setViewDrawerOpen(false);
           setViewingRecordId(null);
         }}
-        destroyOnClose
+        destroyOnHidden
               extra={
                 <Space>
                   {!hideEditWhileWorkflowRunning && (

@@ -716,14 +716,6 @@ export class WorkflowService {
         params.recordId,
       )}${formId ? `&todoFormId=${encodeURIComponent(formId)}` : ''}`;
 
-      todoTitle = todoTitleTemplate
-        ? todoTitleTemplate
-            .replace(/\{表单名称\}/g, formName || workflowName || '审批流程')
-            .replace(/\{流程名称\}/g, workflowName || formName || '审批流程')
-            .replace(/\{节点名称\}/g, String(params.nodeLabel || '审批节点'))
-            .replace(/\{记录ID\}/g, String(params.recordId || ''))
-        : `待办：${params.nodeLabel}`;
-
       const formData = await this.formDataRepo.findOne({
         where: { tenantId: params.tenantId, recordId: params.recordId } as any,
       });
@@ -775,6 +767,23 @@ export class WorkflowService {
         messageLines.push(renderTemplate(dingtalkRemarkTemplate));
       }
       const todoDescription = messageLines.filter(Boolean).join('\n') || `流程记录：${params.recordId}`;
+      const renderedTitle = todoTitleTemplate
+        ? todoTitleTemplate
+            .replace(/\{表单名称\}/g, formName || workflowName || '审批流程')
+            .replace(/\{流程名称\}/g, workflowName || formName || '审批流程')
+            .replace(/\{节点名称\}/g, String(params.nodeLabel || '审批节点'))
+            .replace(/\{记录ID\}/g, String(params.recordId || ''))
+        : '';
+      // 标题兜底带上核心信息，避免待办列表里只看到笼统文案
+      todoTitle = (renderedTitle || `待办：${formName || workflowName || params.nodeLabel}`)
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!renderedTitle && submitterName) {
+        todoTitle = `${todoTitle}｜${submitterName}`;
+      }
+      if (todoTitle.length > 80) {
+        todoTitle = `${todoTitle.slice(0, 80)}...`;
+      }
 
       const created = await this.dingtalkService.addToDoTask({
         appKey: String(ding.appKey),

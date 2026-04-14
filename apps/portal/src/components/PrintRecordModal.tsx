@@ -148,7 +148,7 @@ export const PrintRecordModal: React.FC<PrintRecordModalProps> = ({
         ]}
         destroyOnHidden
       >
-        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <Space style={{ width: "100%", display: "flex", flexDirection: "column" }} size="middle">
           {isLoading ? (
             <Text type="secondary">加载模板…</Text>
           ) : templates.length === 0 ? (

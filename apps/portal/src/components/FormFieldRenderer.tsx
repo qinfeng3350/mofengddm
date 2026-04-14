@@ -1751,7 +1751,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     columns={columns}
                                     pagination={false}
                                     size="middle"
-                                    rowKey={(_, index) => `row-${startIndex + index}`}
+                                    rowKey={(_, index) => `row-${startIndex + (index ?? 0)}`}
                                     style={{ margin: 0 }}
                                     bordered
                                     tableLayout="fixed"
@@ -2235,7 +2235,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 validateStatus={fieldState.error ? "error" : ""}
                 help={fieldState.error?.message}
               >
-                <Space direction="vertical" style={{ width: "100%" }}>
+                <Space style={{ width: "100%", display: "flex", flexDirection: "column" }}>
                   <Input
                     {...formField}
                     placeholder="AI识别结果将显示在这里"

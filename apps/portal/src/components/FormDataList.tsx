@@ -830,7 +830,15 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   // 不再使用自定义横向滚动条，同步逻辑移除：避免出现双横条/覆盖数据
 
   // 单个关联记录显示组件
-  const isLikelyFormRecordId = (value: string) => /^record_[\w-]+$/i.test(value);
+  const isLikelyFormRecordId = (value: string) => {
+    const v = String(value || "").trim();
+    if (!v) return false;
+    // recordId 常见格式：record_xxx / uuid。中文名称、展示文案、临时键值直接按文本展示，不发详情请求。
+    if (/^record_[\w-]+$/i.test(v)) return true;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v))
+      return true;
+    return false;
+  };
 
   const SingleRelatedRecordDisplay: React.FC<{
     recordId: string;
