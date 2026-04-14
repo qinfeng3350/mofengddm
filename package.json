@@ -4,18 +4,19 @@
   "private": true,
   "description": "墨枫低代码平台",
   "scripts": {
-    "dev": "concurrently -n \"后端,前端\" -c \"blue,green\" \"npx -y pnpm --filter core dev\" \"npx -y pnpm --filter portal dev\"",
-    "dev:backend": "npx -y pnpm --filter core dev",
-    "dev:frontend": "npx -y pnpm --filter portal dev",
+    "dev": "concurrently -n \"后端,前端\" -c \"blue,green\" \"pnpm --filter core dev\" \"pnpm --filter portal dev\"",
+    "dev:backend": "pnpm --filter core dev",
+    "dev:frontend": "pnpm --filter portal dev",
     "build": "npm run build:frontend && npm run build:backend",
-    "build:frontend": "npx -y pnpm --filter portal build",
-    "build:backend": "npx -y pnpm --filter core build",
+    "build:frontend": "pnpm --filter portal build",
+    "build:backend": "pnpm --filter core build",
     "start": "node services/core/dist/main.js",
-    "start:prod": "NODE_ENV=production node services/core/dist/main.js",
-    "install:all": "npx -y pnpm install",
-    "clean": "npx -y pnpm --filter core clean && npx -y pnpm --filter portal clean",
+    "start:prod": "pnpm --filter core run start:prod",
+    "start:bt": "pnpm --filter core run start:prod",
+    "install:all": "pnpm install",
+    "clean": "pnpm --filter core clean && pnpm --filter portal clean",
     "clean:dist": "rm -rf services/core/dist apps/portal/dist",
-    "audit": "npx -y pnpm audit --audit-level=high"
+    "audit": "pnpm audit --audit-level=high"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
