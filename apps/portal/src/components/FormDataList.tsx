@@ -1787,7 +1787,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
               <Empty description="暂无数据" />
             </div>
           ) : (
-            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={10} style={{ width: "100%" }}>
               {pagedRowData.map((record: any) => {
                 const recordId = record.recordId || record.id;
                 return (
@@ -2351,7 +2351,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
           }
           setDisplaySettingsVisible(false);
         }}
-        width={360}
+        size={360 as any}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           <div>
@@ -2492,7 +2492,7 @@ export const FormDataList: React.FC<FormDataListProps> = ({
         open={viewCreateModalOpen}
         onCancel={() => setViewCreateModalOpen(false)}
         width={860}
-        destroyOnClose
+        destroyOnHidden
         footer={[
           <Button key="cancel" onClick={() => setViewCreateModalOpen(false)}>
             取消

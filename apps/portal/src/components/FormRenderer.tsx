@@ -1132,7 +1132,7 @@ export const FormRenderer = ({
         okText="确定提交"
         cancelText="取消"
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={10}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={10}>
           {previewDeptOptions.length > 0 && (
             <div>
               <div style={{ fontWeight: 500, marginBottom: 6 }}>

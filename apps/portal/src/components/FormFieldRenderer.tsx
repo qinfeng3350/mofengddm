@@ -454,27 +454,27 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 validateStatus={fieldState.error ? "error" : ""}
                 help={fieldState.error?.message}
               >
-                <InputNumber
-                  {...formField}
-                  stringMode
-                  placeholder={field.placeholder}
-                  disabled={isDisabled}
-                  style={{ width: "100%" }}
-                  precision={nf.keepDecimals && !nf.noRounding ? nf.decimalPlaces : undefined}
-                  addonAfter={nf.unit || undefined}
-                  formatter={(v) => {
+                <Space.Compact style={{ width: "100%" }}>
+                  <InputNumber
+                    {...formField}
+                    stringMode
+                    placeholder={field.placeholder}
+                    disabled={isDisabled}
+                    style={{ width: "100%" }}
+                    precision={nf.keepDecimals && !nf.noRounding ? nf.decimalPlaces : undefined}
+                    formatter={(v) => {
                     if (v == null || v === "") return "";
                     const raw = String(v);
                     const cleaned = raw.replace(/,/g, "");
                     const normalized = nf.keepDecimals ? cleaned : cleaned;
                     return nf.thousandSeparator ? addThousandsSep(normalized) : normalized;
-                  }}
-                  parser={(v) => {
+                    }}
+                    parser={(v) => {
                     const raw = String(v ?? "");
                     const noUnit = nf.unit ? raw.replace(new RegExp(`\\s*${nf.unit}$`), "") : raw;
                     return noUnit.replace(/,/g, "");
-                  }}
-                  onChange={(val) => {
+                    }}
+                    onChange={(val) => {
                     if (!nf.keepDecimals) {
                       formField.onChange(val);
                       return;
@@ -487,8 +487,14 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                       return;
                     }
                     formField.onChange(val);
-                  }}
-                />
+                    }}
+                  />
+                  {nf.unit ? (
+                    <div style={{ minWidth: 40, padding: "0 8px", border: "1px solid #d9d9d9", borderLeft: "none", borderRadius: "0 6px 6px 0", background: "#fafafa", color: "#666", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>
+                      {nf.unit}
+                    </div>
+                  ) : null}
+                </Space.Compact>
               </Form.Item>
             )}
           />
@@ -990,7 +996,12 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               // 分页数据
               const startIndex = (currentPage - 1) * pageSize;
               const endIndex = startIndex + pageSize;
-              const paginatedData = dataSource.slice(startIndex, endIndex);
+              const paginatedData = dataSource
+                .slice(startIndex, endIndex)
+                .map((row, idx) => ({
+                  ...row,
+                  __rowKey: (row as any)?.__rowKey || `row-${startIndex + idx}`,
+                }));
               
               const handleCellChange = (value: any, index: number, subFieldId: string) => {
                 const newData = [...dataSource];
@@ -1067,7 +1078,11 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   if (raw == null) return undefined;
                   if (typeof raw === "string" || typeof raw === "number") {
                     const s = String(raw).trim();
-                    return s ? s : undefined;
+                    if (!s) return undefined;
+                    return /^record_[\w-]+$/i.test(s) ||
+                      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
+                      ? s
+                      : undefined;
                   }
                   if (typeof raw === "object") {
                     const v =
@@ -1348,10 +1363,10 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                       case "number":
                         const snf = getNumberFormat(subField);
                         return (
-                          <InputNumber
+                          <Space.Compact style={{ width: "100%" }}>
+                            <InputNumber
                             value={effectiveText}
                             stringMode
-                            addonAfter={snf.unit || undefined}
                             precision={snf.keepDecimals && !snf.noRounding ? snf.decimalPlaces : undefined}
                             formatter={(v) => {
                               if (v == null || v === "") return "";
@@ -1382,7 +1397,13 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             size="small"
                             style={{ width: "100%" }}
                             disabled={isCellDisabled(subField)}
-                          />
+                            />
+                            {snf.unit ? (
+                              <div style={{ minWidth: 32, padding: "0 8px", border: "1px solid #d9d9d9", borderLeft: "none", borderRadius: "0 6px 6px 0", background: "#fafafa", color: "#666", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>
+                                {snf.unit}
+                              </div>
+                            ) : null}
+                          </Space.Compact>
                         );
                       case "date":
                         const sfFormat =
@@ -1751,7 +1772,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     columns={columns}
                                     pagination={false}
                                     size="middle"
-                                    rowKey={(_, index) => `row-${startIndex + (index ?? 0)}`}
+                                    rowKey={(record) => String((record as any).__rowKey)}
                                     style={{ margin: 0 }}
                                     bordered
                                     tableLayout="fixed"

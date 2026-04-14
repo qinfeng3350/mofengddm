@@ -647,6 +647,7 @@ export class WorkflowService {
       let dingtalkRemarkTemplate = '';
       let dingtalkAppendRemark = true;
       let dingtalkMessageFormFields: Array<{ label?: string; token?: string }> = [];
+      const formFieldTokenMap = new Map<string, string>();
       try {
         const inst = await this.instanceRepo.findOne({
           where: { tenantId: params.tenantId, recordId: params.recordId },
@@ -669,6 +670,30 @@ export class WorkflowService {
             where: { tenantId: params.tenantId, formId },
           });
           formName = String(formDef?.formName || '').trim();
+          const formCfg: any = (formDef as any)?.config || {};
+          const collectFields = (list: any[]): any[] => {
+            const out: any[] = [];
+            for (const item of Array.isArray(list) ? list : []) {
+              if (!item || typeof item !== "object") continue;
+              if (item.type === "groupTitle" || item.type === "tab" || item.type === "multiColumn") {
+                const children = item.children || (Array.isArray(item.columns) ? item.columns.flatMap((c: any) => c?.children || []) : []);
+                out.push(...collectFields(children));
+                continue;
+              }
+              out.push(item);
+            }
+            return out;
+          };
+          const flatFields = collectFields(formCfg?.elements || formCfg?.fields || []);
+          flatFields.forEach((f: any) => {
+            const id = String(f?.fieldId || "").trim();
+            const label = String(f?.label || f?.fieldName || "").trim();
+            if (!id) return;
+            formFieldTokenMap.set(id, id);
+            if (label) formFieldTokenMap.set(label, id);
+            formFieldTokenMap.set(`{${id}}`, id);
+            if (label) formFieldTokenMap.set(`{${label}}`, id);
+          });
           const workflowMetaFromDefinition: any =
             (formDef as any)?.config?.workflow?.metadata?.dingtalk || {};
           if (!todoTitleTemplate) {
@@ -735,8 +760,9 @@ export class WorkflowService {
         if (inner === '记录ID') return String(params.recordId || '');
         if (inner === '提交人') return submitterName;
         if (inner === '更新时间') return updatedAtText;
-        if (Object.prototype.hasOwnProperty.call(formValues, inner)) {
-          const v = formValues[inner];
+        const mappedFieldId = formFieldTokenMap.get(inner) || formFieldTokenMap.get(`{${inner}}`) || inner;
+        if (Object.prototype.hasOwnProperty.call(formValues, mappedFieldId)) {
+          const v = formValues[mappedFieldId];
           if (v == null) return '';
           return Array.isArray(v) ? v.join('、') : String(v);
         }

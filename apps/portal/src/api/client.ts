@@ -40,13 +40,21 @@ apiClient.interceptors.response.use(
     return response.data;
   },
   (error) => {
-    console.error("[API Client] 请求错误:", {
-      url: error.config?.url,
-      method: error.config?.method,
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message,
-    });
+    const status = error.response?.status;
+    const url = String(error.config?.url || "");
+    const isExpected404 =
+      status === 404 &&
+      (url.includes("/workflows/instances/by-record/") || url.includes("/workflows/instances/by-record%2F"));
+
+    if (!isExpected404) {
+      console.error("[API Client] 请求错误:", {
+        url: error.config?.url,
+        method: error.config?.method,
+        status,
+        data: error.response?.data,
+        message: error.message,
+      });
+    }
     if (error.response?.status === 401) {
       // token过期或无效，清除认证信息
       localStorage.removeItem("auth-storage");

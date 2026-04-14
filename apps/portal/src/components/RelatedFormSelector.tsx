@@ -541,7 +541,7 @@ export const RelatedFormSelector = ({
                 type="info"
                 showIcon
                 style={{ marginTop: 12 }}
-                message={`已按设计器配置过滤可选数据（${dataFilterConditions!.length} 条条件）`}
+                title={`已按设计器配置过滤可选数据（${dataFilterConditions!.length} 条条件）`}
               />
             ) : null}
           </div>
