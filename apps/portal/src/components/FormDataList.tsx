@@ -830,6 +830,8 @@ export const FormDataList: React.FC<FormDataListProps> = ({
   // 不再使用自定义横向滚动条，同步逻辑移除：避免出现双横条/覆盖数据
 
   // 单个关联记录显示组件
+  const isLikelyFormRecordId = (value: string) => /^record_[\w-]+$/i.test(value);
+
   const SingleRelatedRecordDisplay: React.FC<{
     recordId: string;
     relatedFormId: string;
@@ -843,10 +845,15 @@ export const FormDataList: React.FC<FormDataListProps> = ({
       return <span>-</span>;
     }
 
+    // 兼容历史脏数据：若存的是展示文本（如“水杯”）而非 recordId，则直接展示，避免请求 404
+    if (!isLikelyFormRecordId(recordIdStr)) {
+      return <span>{recordIdStr}</span>;
+    }
+
     const { data: recordData, isLoading, error } = useQuery({
       queryKey: ["formData", recordIdStr],
       queryFn: () => formDataApi.getById(recordIdStr),
-      enabled: !!recordIdStr,
+      enabled: isLikelyFormRecordId(recordIdStr),
       retry: 1, // 只重试一次
       staleTime: 5 * 60 * 1000, // 5分钟缓存
     });
@@ -918,10 +925,14 @@ export const FormDataList: React.FC<FormDataListProps> = ({
     const recordIdStr = String(recordId || "").trim();
     if (!recordIdStr) return <span>-</span>;
 
+    if (!isLikelyFormRecordId(recordIdStr)) {
+      return <span>{recordIdStr}</span>;
+    }
+
     const { data: recordData } = useQuery({
       queryKey: ["optionRelatedRecord", relatedFormId, recordIdStr],
       queryFn: () => formDataApi.getById(recordIdStr),
-      enabled: !!relatedFormId && !!recordIdStr,
+      enabled: !!relatedFormId && isLikelyFormRecordId(recordIdStr),
       retry: 1,
       staleTime: 5 * 60 * 1000,
     });
