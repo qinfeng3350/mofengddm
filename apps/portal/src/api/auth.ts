@@ -22,6 +22,7 @@ export interface AuthResponse {
     name: string;
     email: string;
     phone?: string;
+    avatar?: string | null;
   };
 }
 

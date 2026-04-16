@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Layout, Menu, Empty, Button, Card, Modal, Form, Select, Alert, Typography, Space, Input, Collapse, Drawer, Dropdown, Tag, Switch, Divider, Radio, Table, Tooltip } from "antd";
+import { Layout, Menu, Empty, Button, Card, Modal, Form, Select, Alert, Typography, Space, Input, Collapse, Drawer, Dropdown, Tag, Switch, Divider, Radio, Table, Tooltip, QRCode } from "antd";
 import {
   LockOutlined,
   FileTextOutlined,
@@ -18,6 +18,7 @@ import {
   CloseOutlined,
   DeleteOutlined,
   EditOutlined,
+  QrcodeOutlined,
   FileTextOutlined as FileTextIcon,
   SwapOutlined,
 } from "@ant-design/icons";
@@ -1837,14 +1838,14 @@ const BusinessRuleSettings: React.FC<{
                   <Card
                     key={rule.ruleId}
                     style={{ border: "1px solid #f0f0f0" }}
-                    bodyStyle={{ padding: 16 }}
+                    styles={{ body: { padding: 16 } }}
                   >
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
                       <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#f0f0f0", borderRadius: 4, flexShrink: 0 }}>
                         {index + 1}
                       </div>
                       <div style={{ flex: 1 }}>
-                        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                        <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                           <div>
                             <Text type="secondary">触发事件：</Text>
                             <Text>{getTriggerEventText(rule)}</Text>
@@ -1916,7 +1917,7 @@ const BusinessRuleSettings: React.FC<{
         okText="确定"
         cancelText="取消"
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 14, color: "#666", marginBottom: 8, lineHeight: 1.8 }}>
@@ -2241,7 +2242,7 @@ const BusinessRuleSettings: React.FC<{
         footer={null}
         closable
         maskClosable={false}
-        bodyStyle={{ padding: 0 }}
+        styles={{ body: { padding: 0 } }}
       >
         {/* 中间内容区域：左右两栏布局 */}
         <div style={{ display: "flex", height: 410, gap: 0 }}>
@@ -2884,7 +2885,7 @@ const FieldPermissionSettings: React.FC<{ formId?: string }> = ({ formId }) => {
   return (
     <SettingsPageLayout title="字段权限">
       <Card style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
           <Alert
             type="info"
             showIcon
@@ -3079,11 +3080,196 @@ const AssociatedListSettings: React.FC<{ formId?: string }> = ({ formId }) => {
 
 // 表单外链设置组件
 const ExternalLinkSettings: React.FC<{ formId?: string }> = ({ formId }) => {
+  const [qrOpen, setQrOpen] = useState(false);
+  const { data: formDefinition, refetch } = useQuery({
+    queryKey: ["formDefinition", formId, "external-link"],
+    queryFn: () => formDefinitionApi.getById(formId!),
+    enabled: !!formId,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (nextConfig: any) => {
+      if (!formId || !formDefinition) return;
+      const currentMeta = (formDefinition.metadata || {}) as Record<string, any>;
+      await formDefinitionApi.update(formId, {
+        fields: (formDefinition as any)?.config?.fields || [],
+        layout: (formDefinition as any)?.config?.layout,
+        metadata: {
+          ...currentMeta,
+          externalLink: {
+            ...(currentMeta.externalLink || {}),
+            ...nextConfig,
+          },
+        },
+      });
+    },
+    onSuccess: () => {
+      message.success("保存成功");
+      refetch();
+    },
+    onError: (err: any) => {
+      message.error(err?.message || "保存失败");
+    },
+  });
+
+  const externalLinkConfig =
+    ((formDefinition?.metadata as any)?.externalLink as
+      | {
+          enableExternalFill?: boolean;
+          enableDataShare?: boolean;
+          enablePublicQuery?: boolean;
+          enableExternalView?: boolean;
+        }
+      | undefined) || {};
+
+  const handleToggle = (
+    key: "enableExternalFill" | "enableDataShare" | "enablePublicQuery" | "enableExternalView",
+    checked: boolean,
+  ) => {
+    updateMutation.mutate({ [key]: checked });
+  };
+
+  const externalFillUrl = `${window.location.origin}/runtime/form?formId=${encodeURIComponent(formId || "")}`;
+
+  const handleCopyExternalFillUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(externalFillUrl);
+      message.success("链接已复制");
+    } catch {
+      message.error("复制失败");
+    }
+  };
+
+  const itemStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 56,
+    borderBottom: "1px solid #f0f0f0",
+    padding: "0 2px",
+  };
+
+  const titleStyle: React.CSSProperties = {
+    fontSize: 16,
+    fontWeight: 600,
+    color: "#1f2d3d",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  };
+
+  const blueBarStyle: React.CSSProperties = {
+    width: 4,
+    height: 16,
+    background: "#1677ff",
+    borderRadius: 2,
+    display: "inline-block",
+  };
+
   return (
     <SettingsPageLayout title="表单外链">
-      <Card style={{ height: "100%" }}>
-        <Empty description="表单外链设置功能开发中..." />
-      </Card>
+      <div
+        style={{
+          minHeight: "100%",
+          background: "#fff",
+          border: "1px solid #f0f0f0",
+          borderRadius: 2,
+          padding: 16,
+        }}
+      >
+        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 12 }}>表单外链</div>
+        <div style={{ marginBottom: 14 }}>
+          <Text strong style={{ display: "block", marginBottom: 6 }}>
+            说明：
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            企业的外链访问频次支持 40 次/秒，超时上限时可能出现访问闪烁症状无法打开页面。
+          </Text>
+        </div>
+
+        <div style={itemStyle}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={blueBarStyle} />
+            <span style={titleStyle}>外链填单</span>
+            <Text type="secondary">外部人员访问链接或二维码扫码填写数据</Text>
+            <Button type="link" style={{ padding: 0 }}>设置字段权限</Button>
+          </div>
+          <Switch
+            checked={!!externalLinkConfig.enableExternalFill}
+            onChange={(checked) => handleToggle("enableExternalFill", checked)}
+            loading={updateMutation.isPending}
+          />
+        </div>
+
+        {!!externalLinkConfig.enableExternalFill && (
+          <div style={{ margin: "12px 0 16px", border: "1px solid #f0f0f0", background: "#fafafa", padding: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <Input value={externalFillUrl} readOnly />
+              <Button onClick={() => window.open(externalFillUrl, "_blank")}>打开</Button>
+              <Button type="primary" onClick={handleCopyExternalFillUrl}>复制</Button>
+              <Button type="text" icon={<QrcodeOutlined />} onClick={() => setQrOpen(true)} />
+            </div>
+            <div style={{ background: "#f5f6fa", padding: 12 }}>
+              <div style={{ marginBottom: 10 }}>
+                <Text strong>主题样式</Text>
+                <Text style={{ marginLeft: 12 }}>默认主题</Text>
+                <Button type="link" style={{ paddingInline: 8 }}>修改</Button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <Text strong>外链查看</Text>
+                  <Text type="secondary" style={{ marginLeft: 10 }}>
+                    外部人员填单后通过二维码查看数据
+                  </Text>
+                </div>
+                <Switch
+                  checked={!!externalLinkConfig.enableExternalView}
+                  onChange={(checked) => handleToggle("enableExternalView", checked)}
+                  loading={updateMutation.isPending}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={itemStyle}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={blueBarStyle} />
+            <span style={titleStyle}>数据分享</span>
+            <Text type="secondary">内部人员将权限范围内的数据分享给外部人员查看</Text>
+          </div>
+          <Switch
+            checked={!!externalLinkConfig.enableDataShare}
+            onChange={(checked) => handleToggle("enableDataShare", checked)}
+            loading={updateMutation.isPending}
+          />
+        </div>
+
+        <div style={itemStyle}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={blueBarStyle} />
+            <span style={titleStyle}>公开查询</span>
+            <Text type="secondary">外部人员通过公开链接或二维码查询表单数据</Text>
+          </div>
+          <Switch
+            checked={!!externalLinkConfig.enablePublicQuery}
+            onChange={(checked) => handleToggle("enablePublicQuery", checked)}
+            loading={updateMutation.isPending}
+          />
+        </div>
+      </div>
+      <Modal
+        title="外链填单二维码"
+        open={qrOpen}
+        footer={null}
+        onCancel={() => setQrOpen(false)}
+        destroyOnHidden
+      >
+        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 16px" }}>
+          <QRCode value={externalFillUrl} size={220} />
+        </div>
+        <Input value={externalFillUrl} readOnly />
+      </Modal>
     </SettingsPageLayout>
   );
 };
@@ -3399,7 +3585,7 @@ const WorkflowSettings: React.FC<{ formId?: string }> = ({ formId }) => {
   return (
     <SettingsPageLayout title="流程设置">
       <Card>
-        <Space direction="vertical" style={{ width: "100%" }} size="large">
+        <Space orientation="vertical" style={{ width: "100%" }} size="large">
           <div>
             <div style={{ marginBottom: 8 }}>
               <Text strong>启用流程</Text>

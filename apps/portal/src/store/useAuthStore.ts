@@ -8,6 +8,7 @@ interface User {
   name: string;
   email: string;
   phone?: string;
+  avatar?: string | null;
   tenantId?: string;
   tenant?: {
     id: string;

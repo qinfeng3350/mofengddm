@@ -1685,9 +1685,9 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                   <div
                     style={{
                       border: "1px solid #f0f0f0",
-                      borderRadius: 10,
+                      borderRadius: 0,
                       background: "#fff",
-                      overflow: "hidden",
+                      overflow: "visible",
                     }}
                   >
                     {subtableFields.length > 0 ? (
@@ -1698,10 +1698,10 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
-                            padding: "12px 16px",
+                            padding: "10px 12px",
                             borderBottom: "1px solid #f0f0f0",
                             cursor: "pointer",
-                            background: "#f8fafc",
+                            background: "#fff",
                           }}
                           onClick={() => setExpanded(!expanded)}
                         >
@@ -1720,8 +1720,8 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "space-between",
-                                  padding: "10px 14px",
-                                  borderBottom: "1px solid #eef2f7",
+                                  padding: "8px 12px",
+                                  borderBottom: "1px solid #f0f0f0",
                                   background: "#fff",
                                 }}
                               >
@@ -1735,7 +1735,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                       handleAddRow();
                                     }}
                                     disabled={isDisabled}
-                                    style={{ borderRadius: 6 }}
+                                    style={{ borderRadius: 4 }}
                                   >
                                     新增
                                   </Button>
@@ -1747,7 +1747,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                       handleImport();
                                     }}
                                     disabled={isDisabled}
-                                    style={{ borderRadius: 6 }}
+                                    style={{ borderRadius: 4 }}
                                   >
                                     导入
                                   </Button>
@@ -1760,7 +1760,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                       handleDeleteRows();
                                     }}
                                     disabled={isDisabled || selectedRowKeys.length === 0}
-                                    style={{ borderRadius: 6 }}
+                                    style={{ borderRadius: 4 }}
                                   >
                                     删除
                                   </Button>
@@ -1773,7 +1773,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     }}
                                     trigger={["click"]}
                                   >
-                                    <Button size="small" style={{ borderRadius: 6 }}>选择筛选字段</Button>
+                                    <Button size="small" style={{ borderRadius: 4 }}>选择筛选字段</Button>
                                   </Dropdown>
                                 </Space>
                               </div>
@@ -1784,7 +1784,34 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                               <div className="subgrid-control-adapter subgrid-title-400">
                                 <div className="form-grid-view is-disabled is-scrolling-none control">
                                   <div className="subgrid">
+                                    {(() => {
+                                      const isCenterCol = (sf: any) => {
+                                        const label = String(sf?.label || "");
+                                        const type = String(sf?.type || sf?.fieldType || "");
+                                        if (/(数量|金额|价格|合计|总计|单价|库存)/.test(label)) return true;
+                                        if (/(number|inputNumber|money|calc|formula)/i.test(type)) return true;
+                                        return false;
+                                      };
+                                      const rowStyle: React.CSSProperties = {
+                                        display: "grid",
+                                        gridTemplateColumns: `58px repeat(${Math.max(1, subtableFields.length)}, minmax(0, 1fr))`,
+                                        width: "100%",
+                                      };
+                                      return (
+                                    <>
                                     <div className="subgrid-toolbar">
+                                      <div style={{ display: "inline-block" }}>
+                                        <Select
+                                          size="small"
+                                          style={{ width: 160 }}
+                                          placeholder="选择筛选字段"
+                                          disabled
+                                          options={subtableFields.map((sf: any) => ({
+                                            label: sf.label,
+                                            value: sf.fieldId,
+                                          }))}
+                                        />
+                                      </div>
                                       <ul className="subgrid-toolbar__more">
                                         <li>
                                           <FullscreenOutlined />
@@ -1793,70 +1820,50 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                           <ColumnWidthOutlined />
                                         </li>
                                       </ul>
-                                      <div style={{ display: "inline-block" }}>
-                                        <Select
-                                          size="small"
-                                          style={{ width: 160 }}
-                                          placeholder="选择筛选字段"
-                                          options={subtableFields.map((sf: any) => ({
-                                            label: sf.label,
-                                            value: sf.fieldId,
-                                          }))}
-                                        />
-                                      </div>
                                     </div>
 
                                     <div className="subgrid-sheet">
-                                      <div className="subgrid-sheet__header subgrid-sheet__header__readonly">
-                                        <div className="subgrid-sheet__col is-col-first">
-                                          <div className="subgrid-col-main-title is-center">
-                                            <span className="subgrid-sheet__col--number">序号</span>
-                                          </div>
-                                        </div>
-                                        <div className="subgrid-sheet__cols">
-                                          <div className="subgrid-sheet__row">
-                                            {subtableFields.map((sf: any) => (
-                                              <div key={sf.fieldId} className="subgrid-sheet__col">
-                                                <div className="subgrid-col-main-title">
-                                                  <span title={sf.label}>{sf.label}</span>
-                                                </div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      <div className="subgrid-sheet__body">
-                                        {(paginatedData || []).map((row: any, idx: number) => (
+                                      <div className="subgrid-grid-row subgrid-grid-header" style={rowStyle}>
+                                        <div className="subgrid-grid-cell is-center">序号</div>
+                                        {subtableFields.map((sf: any) => (
                                           <div
-                                            key={String((row as any).__rowKey)}
-                                            className="subgrid-sheet__row is-disabled"
+                                            key={sf.fieldId}
+                                            className={`subgrid-grid-cell${isCenterCol(sf) ? " is-center" : ""}`}
+                                            title={sf.label}
                                           >
-                                            <div className="subgrid-sheet__col is-col-first is-center">
-                                              <span className="subgrid-sheet__col--number">
-                                                {startIndex + idx + 1}
-                                              </span>
-                                            </div>
-                                            <div className="subgrid-sheet__cols is-row-content">
-                                              <div className="subgrid-sheet__row">
-                                                {subtableFields.map((sf: any) => (
-                                                  <div key={sf.fieldId} className="subgrid-sheet__col is-middle">
-                                                    <div className="readonly">
-                                                      {(() => {
-                                                        const v = (row || {})[sf.fieldId];
-                                                        if (v == null || v === "") return "-";
-                                                        if (Array.isArray(v)) return `共 ${v.length} 项`;
-                                                        if (typeof v === "object") return JSON.stringify(v);
-                                                        return String(v);
-                                                      })()}
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            </div>
+                                            {sf.label}
                                           </div>
                                         ))}
                                       </div>
+                                      {(paginatedData || []).map((row: any, idx: number) => (
+                                        <div
+                                          key={String((row as any).__rowKey)}
+                                          className="subgrid-grid-row"
+                                          style={rowStyle}
+                                        >
+                                          <div className="subgrid-grid-cell is-center">{startIndex + idx + 1}</div>
+                                          {subtableFields.map((sf: any) => {
+                                            const v = (row || {})[sf.fieldId];
+                                            const text =
+                                              v == null || v === ""
+                                                ? "-"
+                                                : Array.isArray(v)
+                                                  ? `共 ${v.length} 项`
+                                                  : typeof v === "object"
+                                                    ? JSON.stringify(v)
+                                                    : String(v);
+                                            return (
+                                              <div
+                                                key={sf.fieldId}
+                                                className={`subgrid-grid-cell${isCenterCol(sf) ? " is-center" : ""}`}
+                                                title={text}
+                                              >
+                                                {text}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      ))}
                                     </div>
 
                                     <div className="subgrid-footer">
@@ -1876,6 +1883,9 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                         />
                                       </div>
                                     </div>
+                                    </>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                               </div>
@@ -1900,7 +1910,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "space-between",
-                                    padding: "12px 16px",
+                                    padding: "8px 12px",
                                     borderTop: "1px solid #f0f0f0",
                                     background: "#fff",
                                   }}

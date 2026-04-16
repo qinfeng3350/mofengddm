@@ -26,6 +26,8 @@ import {
   CommentOutlined,
   CaretDownOutlined,
   CaretRightOutlined,
+  LeftOutlined,
+  RightOutlined,
   EllipsisOutlined,
   HomeOutlined,
   QuestionCircleOutlined,
@@ -41,6 +43,7 @@ import { FormDataList } from "@/components/FormDataList";
 import { FormRenderer } from "@/components/FormRenderer";
 import { WorkflowInstancePanel } from "@/components/WorkflowInstancePanel";
 import { PrintRecordModal } from "@/components/PrintRecordModal";
+import { operationLogApi } from "@/api/operationLog";
 import { IconSelector } from "@/components/IconSelector";
 import { renderIcon } from "@/utils/iconRenderer";
 import ReactECharts from "echarts-for-react";
@@ -142,11 +145,22 @@ const RealtimeTimeDisplay = ({
 
 const { Sider, Content } = Layout;
 
+type ResizableDrawerProps = React.ComponentProps<typeof Drawer> & {
+  initialDrawerWidth?: number;
+  minDrawerWidth?: number;
+  maxDrawerWidth?: number;
+};
+
 // 可拖拽宽度的 Drawer 包装组件
-const ResizableDrawer: React.FC<React.ComponentProps<typeof Drawer>> = (props) => {
-  const [width, setWidth] = useState<number>(960);
-  const minWidth = 720;
-  const maxWidth = 1400;
+const ResizableDrawer: React.FC<ResizableDrawerProps> = ({
+  initialDrawerWidth = 960,
+  minDrawerWidth = 720,
+  maxDrawerWidth = 1600,
+  ...props
+}) => {
+  const [width, setWidth] = useState<number>(initialDrawerWidth);
+  const minWidth = minDrawerWidth;
+  const maxWidth = maxDrawerWidth;
 
   const resizingRef = useRef(false);
   const startXRef = useRef(0);
@@ -174,6 +188,12 @@ const ResizableDrawer: React.FC<React.ComponentProps<typeof Drawer>> = (props) =
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", onMouseUp);
   };
+
+  useEffect(() => {
+    if (props.open) {
+      setWidth(initialDrawerWidth);
+    }
+  }, [props.open, initialDrawerWidth]);
 
   useEffect(() => {
     return () => {
@@ -278,8 +298,31 @@ export const RuntimeListPage = () => {
   });
   const effectiveFormId = selectedFormId || viewingRecord?.formId || "";
 
+  const { data: viewRecordList = [] } = useQuery({
+    queryKey: ["formData", "view-nav", effectiveFormId],
+    queryFn: () => formDataApi.getListByForm(effectiveFormId),
+    enabled: !!effectiveFormId && viewDrawerOpen,
+    staleTime: 10_000,
+  });
+
+  const currentViewRecordIndex = useMemo(() => {
+    if (!viewingRecordId) return -1;
+    return (viewRecordList || []).findIndex((item) => item.recordId === viewingRecordId);
+  }, [viewRecordList, viewingRecordId]);
+
+  const handleJumpViewRecord = (step: -1 | 1) => {
+    if (currentViewRecordIndex < 0) return;
+    const nextIndex = currentViewRecordIndex + step;
+    if (nextIndex < 0 || nextIndex >= viewRecordList.length) return;
+    const next = viewRecordList[nextIndex];
+    if (!next?.recordId) return;
+    setViewingRecordId(next.recordId);
+  };
+
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [viewFullscreen, setViewFullscreen] = useState(false);
+  const [commentPanelOpen, setCommentPanelOpen] = useState(false);
+  const [commentInput, setCommentInput] = useState("");
   const viewBodyRef = useRef<HTMLDivElement | null>(null);
 
   const handleShareView = async () => {
@@ -307,6 +350,46 @@ export const RuntimeListPage = () => {
       }
     } catch {
       message.warning("当前环境不支持全屏");
+    }
+  };
+
+  const { data: comments = [], isFetching: commentsLoading } = useQuery({
+    queryKey: ["record-comments", effectiveFormId, viewingRecordId],
+    queryFn: () => operationLogApi.getComments(effectiveFormId, viewingRecordId!),
+    enabled: !!effectiveFormId && !!viewingRecordId && viewDrawerOpen,
+    staleTime: 5000,
+  });
+
+  const handleSubmitComment = async () => {
+    if (!effectiveFormId || !viewingRecordId) return;
+    const content = commentInput.trim();
+    if (!content) {
+      message.warning("请输入评论内容");
+      return;
+    }
+    try {
+      await operationLogApi.addComment({
+        formId: effectiveFormId,
+        recordId: viewingRecordId,
+        content,
+      });
+      setCommentInput("");
+      queryClient.invalidateQueries({
+        queryKey: ["record-comments", effectiveFormId, viewingRecordId],
+      });
+    } catch {
+      message.error("评论发送失败");
+    }
+  };
+
+  const handleDeleteComment = async (id: string) => {
+    try {
+      await operationLogApi.deleteComment(id);
+      queryClient.invalidateQueries({
+        queryKey: ["record-comments", effectiveFormId, viewingRecordId],
+      });
+    } catch {
+      message.error("删除评论失败");
     }
   };
 
@@ -2926,6 +3009,8 @@ export const RuntimeListPage = () => {
           setEditingRecordId(null);
         }}
         destroyOnHidden
+        initialDrawerWidth={1360}
+        maxDrawerWidth={1800}
       >
           {selectedFormId && (
           <FormRenderer
@@ -2945,14 +3030,41 @@ export const RuntimeListPage = () => {
 
       {/* 查看详情抽屉 */}
       <ResizableDrawer
-        title={`${formDefinition?.formName || "未命名表单"}`}
+        title={
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span>{formDefinition?.formName || "未命名表单"}</span>
+            <Space size={4}>
+              <Button
+                size="small"
+                icon={<LeftOutlined />}
+                onClick={() => handleJumpViewRecord(-1)}
+                disabled={currentViewRecordIndex <= 0}
+                style={{ width: 24, height: 22, padding: 0 }}
+              />
+              <Button
+                size="small"
+                icon={<RightOutlined />}
+                onClick={() => handleJumpViewRecord(1)}
+                disabled={
+                  currentViewRecordIndex < 0 ||
+                  currentViewRecordIndex >= viewRecordList.length - 1
+                }
+                style={{ width: 24, height: 22, padding: 0 }}
+              />
+            </Space>
+          </div>
+        }
         open={viewDrawerOpen}
         onClose={() => {
           setViewDrawerOpen(false);
           setViewingRecordId(null);
+          setCommentPanelOpen(false);
+          setCommentInput("");
         }}
         closable={false}
         destroyOnHidden
+        initialDrawerWidth={1360}
+        maxDrawerWidth={1800}
         bodyStyle={{ overflowX: "hidden", padding: 0 }}
               extra={
                 <Space>
@@ -3053,7 +3165,7 @@ export const RuntimeListPage = () => {
             ref={viewBodyRef}
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0,1fr) 52px",
+              gridTemplateColumns: commentPanelOpen ? "minmax(0,1fr) 300px" : "minmax(0,1fr) 52px",
               alignItems: "stretch",
               minHeight: "100%",
               width: "100%",
@@ -3086,28 +3198,140 @@ export const RuntimeListPage = () => {
               style={{
                 borderLeft: "1px solid #f0f0f0",
                 display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "center",
-                paddingTop: 12,
+                flexDirection: "column",
                 marginLeft: 0,
+                background: "#fff",
               }}
             >
-              <Button
-                type="text"
-                icon={<CommentOutlined />}
-                onClick={() => message.info("评论功能待实现")}
-                style={{
-                  height: 86,
-                  borderRadius: 8,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 4,
-                }}
-              >
-                评论
-              </Button>
+              {!commentPanelOpen ? (
+                <div style={{ display: "flex", justifyContent: "center", paddingTop: 12 }}>
+                  <Button
+                    type="text"
+                    icon={<CommentOutlined />}
+                    onClick={() => setCommentPanelOpen(true)}
+                    style={{
+                      height: 86,
+                      borderRadius: 8,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                    }}
+                  >
+                    评论
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      height: 44,
+                      borderBottom: "1px solid #f0f0f0",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "0 12px",
+                    }}
+                  >
+                    <Typography.Text style={{ fontWeight: 500 }}>评论</Typography.Text>
+                    <Button type="text" size="small" onClick={() => setCommentPanelOpen(false)}>
+                      收起
+                    </Button>
+                  </div>
+                  <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+                    {commentsLoading ? (
+                      <Spin size="small" />
+                    ) : comments.length ? (
+                      <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                        {comments.map((item: any) => (
+                          <div key={item.id} style={{ display: "flex", gap: 10 }}>
+                            <Avatar
+                              size={40}
+                              src={item.operatorAvatar || undefined}
+                              style={{
+                                flexShrink: 0,
+                                ...(!item.operatorAvatar
+                                  ? { backgroundColor: "#bfbfbf", color: "#fff" }
+                                  : {}),
+                              }}
+                            >
+                              {(item.operatorName || "U").slice(0, 1)}
+                            </Avatar>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 18, fontWeight: 600, color: "#16233a", lineHeight: "1.2" }}>
+                                {item.operatorName || "未知用户"}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 16,
+                                  color: "#2a2f3a",
+                                  whiteSpace: "pre-wrap",
+                                  margin: "8px 0 10px",
+                                }}
+                              >
+                                {item.content || "-"}
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 12, color: "#6e7f95" }}>
+                                <span style={{ fontSize: 14 }}>
+                                  {dayjs(item.createdAt).format("YYYY-MM-DD HH:mm:ss")}
+                                </span>
+                                {String(item.operatorId || "") === String(user?.id || "") && (
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => handleDeleteComment(String(item.id))}
+                                  />
+                                )}
+                                <Button type="text" size="small" icon={<CommentOutlined />} />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </Space>
+                    ) : (
+                      <div style={{ color: "#999", textAlign: "center", marginTop: 48 }}>暂无评论</div>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      borderTop: "1px solid #f0f0f0",
+                      padding: "10px 12px",
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Avatar
+                      size={34}
+                      src={(user as any)?.avatar || undefined}
+                      style={
+                        !(user as any)?.avatar
+                          ? { backgroundColor: "#bfbfbf", color: "#fff", flexShrink: 0 }
+                          : { flexShrink: 0 }
+                      }
+                    >
+                      {String((user as any)?.name || "用").slice(0, 1)}
+                    </Avatar>
+                    <Input.TextArea
+                      value={commentInput}
+                      onChange={(e) => setCommentInput(e.target.value)}
+                      autoSize={{ minRows: 1, maxRows: 4 }}
+                      placeholder="留下你的评论吧，可@成员。"
+                      onPressEnter={(e) => {
+                        if (!e.shiftKey) {
+                          e.preventDefault();
+                          handleSubmitComment();
+                        }
+                      }}
+                    />
+                    <Button type="primary" onClick={handleSubmitComment}>
+                      发布
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

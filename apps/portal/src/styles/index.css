@@ -40,50 +40,51 @@ body {
   padding: 0;
   color: #8c8c8c;
 }
-.subgrid-sheet__header {
+.subgrid-toolbar__more li {
   display: flex;
-  align-items: stretch;
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
+  align-items: center;
 }
-.subgrid-sheet__col {
-  padding: 10px 12px;
+.subgrid-toolbar__more .anticon {
+  font-size: 16px;
+}
+.subgrid-sheet {
+  border-top: 1px solid #f0f0f0;
+}
+.subgrid-grid-row {
+  display: grid;
+  width: 100%;
+}
+.subgrid-grid-cell {
+  height: 44px;
+  padding: 0 12px;
   border-right: 1px solid #f0f0f0;
-  min-width: 84px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #333;
 }
-.subgrid-sheet__col:last-child {
+.subgrid-grid-cell:last-child {
   border-right: none;
 }
-.subgrid-sheet__col.is-col-first {
-  width: 58px;
-  min-width: 58px;
-  text-align: center;
-  color: #666;
-}
-.subgrid-sheet__cols {
-  flex: 1;
-  overflow: hidden;
-}
-.subgrid-sheet__row {
-  display: flex;
-}
-.subgrid-sheet__body .subgrid-sheet__row {
-  border-bottom: 1px solid #f5f5f5;
-}
-.subgrid-sheet__body .subgrid-sheet__row:last-child {
-  border-bottom: none;
-}
-.subgrid-col-main-title {
+.subgrid-grid-header .subgrid-grid-cell {
   font-weight: 500;
-  color: #333;
+  background: #fff;
 }
-.readonly {
-  color: #333;
+.subgrid-grid-cell.is-center {
+  justify-content: center;
 }
 .subgrid-footer {
   border-top: 1px solid #f0f0f0;
   padding: 10px 12px;
   background: #fff;
+}
+.subgrid-pagination {
+  display: flex;
+  justify-content: flex-end;
 }
 .subgrid-pagination .ant-pagination-total-text {
   color: #666;

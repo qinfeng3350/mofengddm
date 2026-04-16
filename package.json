@@ -22,7 +22,8 @@
     "install:all": "pnpm install",
     "clean": "pnpm --filter core clean && pnpm --filter portal clean",
     "clean:dist": "rm -rf services/core/dist apps/portal/dist",
-    "audit": "pnpm audit --audit-level=high"
+    "audit": "pnpm audit --audit-level=high",
+    "migrate:comments:once": "pnpm --filter core run migrate:comments:once"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

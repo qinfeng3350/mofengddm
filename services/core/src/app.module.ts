@@ -40,6 +40,7 @@ import {
   OperationLogEntity,
   LoginLogEntity,
   EnterpriseLogEntity,
+  RecordCommentEntity,
 } from './database/entities';
 
 @Module({
@@ -85,6 +86,7 @@ import {
             OperationLogEntity,
             LoginLogEntity,
             EnterpriseLogEntity,
+            RecordCommentEntity,
           ],
           synchronize: false,
           // 优化日志：生产环境关闭，开发环境只记录错误和警告

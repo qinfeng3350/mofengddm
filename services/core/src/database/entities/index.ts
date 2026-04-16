@@ -14,3 +14,4 @@ export * from './workflow-instance.entity';
 export * from './operation-log.entity';
 export * from './login-log.entity';
 export * from './enterprise-log.entity';
+export * from './record-comment.entity';

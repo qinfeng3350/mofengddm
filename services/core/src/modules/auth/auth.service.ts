@@ -125,6 +125,7 @@ export class AuthService {
         name: savedUser.name,
         email: savedUser.email,
         phone: savedUser.phone,
+        avatar: savedUser.avatar || null,
       },
     };
   }
@@ -216,6 +217,7 @@ export class AuthService {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        avatar: user.avatar || null,
       },
     };
   }
