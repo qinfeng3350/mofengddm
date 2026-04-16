@@ -32,6 +32,8 @@ import {
   CaretDownOutlined,
   MoreOutlined,
   FileTextOutlined,
+  FullscreenOutlined,
+  ColumnWidthOutlined,
 } from "@ant-design/icons";
 import type { FormFieldSchema } from "@mofeng/shared-schema";
 import dayjs from "dayjs";
@@ -1711,7 +1713,7 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
 
                         {expanded && (
                           <>
-                            {/* 操作按钮栏 */}
+                            {/* 操作按钮栏（编辑态） */}
                             {!isDisabled && (
                               <div
                                 style={{
@@ -1777,8 +1779,107 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                               </div>
                             )}
 
-                            {/* 表格 */}
-                            {paginatedData.length > 0 ? (
+                            {/* 表格（查看态：对标 subgrid DOM） */}
+                            {isDisabled ? (
+                              <div className="subgrid-control-adapter subgrid-title-400">
+                                <div className="form-grid-view is-disabled is-scrolling-none control">
+                                  <div className="subgrid">
+                                    <div className="subgrid-toolbar">
+                                      <ul className="subgrid-toolbar__more">
+                                        <li>
+                                          <FullscreenOutlined />
+                                        </li>
+                                        <li>
+                                          <ColumnWidthOutlined />
+                                        </li>
+                                      </ul>
+                                      <div style={{ display: "inline-block" }}>
+                                        <Select
+                                          size="small"
+                                          style={{ width: 160 }}
+                                          placeholder="选择筛选字段"
+                                          options={subtableFields.map((sf: any) => ({
+                                            label: sf.label,
+                                            value: sf.fieldId,
+                                          }))}
+                                        />
+                                      </div>
+                                    </div>
+
+                                    <div className="subgrid-sheet">
+                                      <div className="subgrid-sheet__header subgrid-sheet__header__readonly">
+                                        <div className="subgrid-sheet__col is-col-first">
+                                          <div className="subgrid-col-main-title is-center">
+                                            <span className="subgrid-sheet__col--number">序号</span>
+                                          </div>
+                                        </div>
+                                        <div className="subgrid-sheet__cols">
+                                          <div className="subgrid-sheet__row">
+                                            {subtableFields.map((sf: any) => (
+                                              <div key={sf.fieldId} className="subgrid-sheet__col">
+                                                <div className="subgrid-col-main-title">
+                                                  <span title={sf.label}>{sf.label}</span>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      <div className="subgrid-sheet__body">
+                                        {(paginatedData || []).map((row: any, idx: number) => (
+                                          <div
+                                            key={String((row as any).__rowKey)}
+                                            className="subgrid-sheet__row is-disabled"
+                                          >
+                                            <div className="subgrid-sheet__col is-col-first is-center">
+                                              <span className="subgrid-sheet__col--number">
+                                                {startIndex + idx + 1}
+                                              </span>
+                                            </div>
+                                            <div className="subgrid-sheet__cols is-row-content">
+                                              <div className="subgrid-sheet__row">
+                                                {subtableFields.map((sf: any) => (
+                                                  <div key={sf.fieldId} className="subgrid-sheet__col is-middle">
+                                                    <div className="readonly">
+                                                      {(() => {
+                                                        const v = (row || {})[sf.fieldId];
+                                                        if (v == null || v === "") return "-";
+                                                        if (Array.isArray(v)) return `共 ${v.length} 项`;
+                                                        if (typeof v === "object") return JSON.stringify(v);
+                                                        return String(v);
+                                                      })()}
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    <div className="subgrid-footer">
+                                      <div className="subgrid-pagination">
+                                        <Pagination
+                                          size="small"
+                                          current={currentPage}
+                                          pageSize={pageSize}
+                                          total={dataSource.length}
+                                          showSizeChanger
+                                          showQuickJumper
+                                          onChange={(page, size) => {
+                                            setCurrentPage(page);
+                                            setPageSize(size);
+                                          }}
+                                          showTotal={(total) => `共${total}条`}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : paginatedData.length > 0 ? (
                               <>
                                 <div style={{ overflowX: "auto" }}>
                                   <Table
