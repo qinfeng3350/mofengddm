@@ -6,8 +6,119 @@ import { UserOutlined, FileTextOutlined, SendOutlined } from "@ant-design/icons"
 import { workflowApi } from "@/api/workflow";
 import { apiClient } from "@/api/client";
 import { useAuthStore } from "@/store/useAuthStore";
+import { formDataApi } from "@/api/formData";
+import { formDefinitionApi } from "@/api/formDefinition";
 
 const { Title, Text } = Typography;
+
+const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
+  const { data: formData } = useQuery({
+    queryKey: ["task-card-formData", task?.recordId],
+    queryFn: () => formDataApi.getById(String(task.recordId)),
+    enabled: !!task?.recordId,
+    staleTime: 30_000,
+  });
+
+  const { data: workflowInstance } = useQuery({
+    queryKey: ["task-card-workflow-instance", task?.recordId],
+    queryFn: () => workflowApi.getInstanceByRecord(String(task.recordId)),
+    enabled: !!task?.recordId,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const { data: formDefinition } = useQuery({
+    queryKey: ["task-card-formDefinition", task?.formId || formData?.formId],
+    queryFn: () => formDefinitionApi.getById(String(task?.formId || formData?.formId || "")),
+    enabled: !!(task?.formId || formData?.formId),
+    staleTime: 60_000,
+  });
+
+  const rendered = useMemo(() => {
+    const instance: any = (workflowInstance as any)?.data ?? (workflowInstance as any) ?? {};
+    const meta: any = instance?.definition?.metadata?.dingtalk || {};
+    const formValues = (formData as any)?.data || {};
+    const submitterName = String((formData as any)?.submitterName || task?.initiatorName || "").trim();
+    const formName = String((formDefinition as any)?.formName || "").trim();
+    const workflowName = String(instance?.definition?.workflowName || "").trim();
+
+    const fieldMap = new Map<string, string>();
+    const cfg: any = (formDefinition as any)?.config || {};
+    const walk = (list: any[]) => {
+      (Array.isArray(list) ? list : []).forEach((item: any) => {
+        if (!item || typeof item !== "object") return;
+        const id = String(item?.fieldId || "").trim();
+        const label = String(item?.label || item?.fieldName || "").trim();
+        if (id) {
+          fieldMap.set(id, id);
+          fieldMap.set(`{${id}}`, id);
+          if (label) {
+            fieldMap.set(label, id);
+            fieldMap.set(`{${label}}`, id);
+          }
+        }
+        if (Array.isArray(item.children)) walk(item.children);
+        if (Array.isArray(item.columns)) {
+          item.columns.forEach((c: any) => Array.isArray(c?.children) && walk(c.children));
+        }
+      });
+    };
+    walk(cfg?.elements || cfg?.fields || []);
+
+    const stringifyValue = (v: any): string => {
+      if (v == null) return "";
+      if (Array.isArray(v)) {
+        return v
+          .map((x) => (x == null ? "" : typeof x === "object" ? Object.values(x).join(" / ") : String(x)))
+          .filter(Boolean)
+          .join("；");
+      }
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    };
+
+    const resolveToken = (tokenRaw: string) => {
+      const inner = String(tokenRaw || "").trim().replace(/^\{|\}$/g, "");
+      if (!inner) return "";
+      if (inner === "表单名称") return formName || workflowName || "审批流程";
+      if (inner === "流程名称") return workflowName || formName || "审批流程";
+      if (inner === "节点名称") return String(task?.label || "审批节点");
+      if (inner === "提交人") return submitterName;
+      const fieldId = fieldMap.get(inner) || fieldMap.get(`{${inner}}`) || inner;
+      return Object.prototype.hasOwnProperty.call(formValues, fieldId) ? stringifyValue(formValues[fieldId]) : "";
+    };
+
+    const renderTpl = (tpl: string) => String(tpl || "").replace(/\{[^{}]+\}/g, (m) => resolveToken(m));
+    const title = String(task?.todoTitle || "").trim() || renderTpl(String(meta?.todoTitleTemplate || "")).trim() || String(task?.label || "流程待办");
+
+    const lines: string[] = [];
+    if (task?.todoDescription) {
+      lines.push(...String(task.todoDescription).split("\n").filter(Boolean));
+    } else {
+      const rows = Array.isArray(meta?.messageFormFields) ? meta.messageFormFields : [];
+      rows.forEach((r: any) => {
+        const label = String(r?.label || "").trim();
+        const token = String(r?.token || "").trim();
+        if (!label || !token) return;
+        const val = resolveToken(token);
+        if (val) lines.push(`${label}：${val}`);
+      });
+      if (meta?.appendRemark !== false && meta?.remark) {
+        const remark = renderTpl(String(meta.remark)).trim();
+        if (remark) lines.push(remark);
+      }
+    }
+    return { title, summary: lines.slice(0, 2).join(" · "), submitterName };
+  }, [formData, formDefinition, workflowInstance, task]);
+
+  return (
+    <>
+      <Text strong style={{ fontSize: 14 }}>{rendered.title}</Text>
+      {rendered.summary ? <Text type="secondary" style={{ fontSize: 12 }}>{rendered.summary}</Text> : null}
+      {rendered.submitterName ? <Text type="secondary" style={{ fontSize: 12 }}>发起人：{rendered.submitterName}</Text> : null}
+    </>
+  );
+};
 
 export const WorkflowTasksPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -118,19 +229,7 @@ export const WorkflowTasksPage = () => {
                     <Tag color="blue">{task.label || "审批节点"}</Tag>
                     <Text type="secondary" style={{ fontSize: 12 }}>{renderNodeType(task.nodeType)}</Text>
                   </Space>
-                  <Text strong style={{ fontSize: 14 }}>
-                    {String(task.todoTitle || task.instanceTitle || `${task.label || "流程待办"}`)}
-                  </Text>
-                  {task.todoDescription ? (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {String(task.todoDescription).split("\n").slice(0, 2).join(" · ")}
-                    </Text>
-                  ) : null}
-                  {task.initiatorName ? (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      发起人：{task.initiatorName}
-                    </Text>
-                  ) : null}
+                  <TaskRichText task={task} />
                   {Array.isArray(task.assignees?.values) && task.assignees.values.length > 0 && (
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       审批人：{task.assignees.values.map((id: any) => {
