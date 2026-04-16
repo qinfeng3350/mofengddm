@@ -45,6 +45,7 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
     const workflowName = String(instance?.definition?.workflowName || "").trim();
 
     const fieldMap = new Map<string, string>();
+    const fieldDefMap = new Map<string, any>();
     const cfg: any = (formDefinition as any)?.config || {};
     const walk = (list: any[]) => {
       (Array.isArray(list) ? list : []).forEach((item: any) => {
@@ -54,6 +55,7 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
         if (id) {
           fieldMap.set(id, id);
           fieldMap.set(`{${id}}`, id);
+          fieldDefMap.set(id, item);
           if (label) {
             fieldMap.set(label, id);
             fieldMap.set(`{${label}}`, id);
@@ -67,6 +69,7 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
             if (!sid) return;
             fieldMap.set(sid, sid);
             fieldMap.set(`{${sid}}`, sid);
+            fieldDefMap.set(sid, sf);
             if (slabel) {
               fieldMap.set(slabel, sid);
               fieldMap.set(`{${slabel}}`, sid);
@@ -92,15 +95,53 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
       return String(v);
     };
 
+    const formatValueByFieldDef = (fieldId: string, rawValue: any): string => {
+      const fieldDef = fieldDefMap.get(fieldId);
+      if (!fieldDef) return stringifyValue(rawValue);
+
+      const fieldType = String(fieldDef?.type || "");
+      const options = Array.isArray(fieldDef?.options) ? fieldDef.options : [];
+      const optionLabelMap = new Map<string, string>();
+      options.forEach((opt: any) => {
+        const ov = String(opt?.value ?? "").trim();
+        const ol = String(opt?.label ?? ov).trim();
+        if (ov) optionLabelMap.set(ov, ol);
+      });
+
+      const mapSingle = (v: any) => {
+        const s = String(v ?? "").trim();
+        if (!s) return "";
+        return optionLabelMap.get(s) || s;
+      };
+
+      if (fieldType === "select" || fieldType === "radio") {
+        return mapSingle(rawValue);
+      }
+      if (fieldType === "checkbox" || fieldType === "multiselect") {
+        if (Array.isArray(rawValue)) {
+          return rawValue.map((v) => mapSingle(v)).filter(Boolean).join("、");
+        }
+        return mapSingle(rawValue);
+      }
+      return stringifyValue(rawValue);
+    };
+
     const resolveToken = (tokenRaw: string) => {
       const inner = String(tokenRaw || "").trim().replace(/^\{|\}$/g, "");
       if (!inner) return "";
       if (inner === "表单名称") return formName || workflowName || "审批流程";
-      if (inner === "流程名称") return workflowName || formName || "审批流程";
+      if (inner === "流程名称") {
+        const wf = String(workflowName || "").trim();
+        // 设计器常见默认名“流程”信息量太低，回退到更有业务语义的表单名
+        if (!wf || wf === "流程") return formName || "审批流程";
+        return wf;
+      }
       if (inner === "节点名称") return String(task?.label || "审批节点");
       if (inner === "提交人") return submitterName;
       const fieldId = fieldMap.get(inner) || fieldMap.get(`{${inner}}`) || inner;
-      return Object.prototype.hasOwnProperty.call(formValues, fieldId) ? stringifyValue(formValues[fieldId]) : "";
+      return Object.prototype.hasOwnProperty.call(formValues, fieldId)
+        ? formatValueByFieldDef(fieldId, formValues[fieldId])
+        : "";
     };
 
     const renderTpl = (tpl: string) => String(tpl || "").replace(/\{[^{}]+\}/g, (m) => resolveToken(m));
