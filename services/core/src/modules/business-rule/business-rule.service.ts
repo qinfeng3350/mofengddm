@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BusinessRuleEntity } from '../../database/entities/business-rule.entity';
+import { BusinessRuleExecutionLogEntity } from '../../database/entities/business-rule-execution-log.entity';
 import { CreateBusinessRuleDto, UpdateBusinessRuleDto } from './dto/create-business-rule.dto';
 
 @Injectable()
@@ -9,6 +10,8 @@ export class BusinessRuleService {
   constructor(
     @InjectRepository(BusinessRuleEntity)
     private businessRuleRepository: Repository<BusinessRuleEntity>,
+    @InjectRepository(BusinessRuleExecutionLogEntity)
+    private executionLogRepository: Repository<BusinessRuleExecutionLogEntity>,
   ) {}
 
   async create(
@@ -81,6 +84,23 @@ export class BusinessRuleService {
     const rule = await this.findOne(ruleId, tenantId);
     rule.enabled = enabled;
     return await this.businessRuleRepository.save(rule);
+  }
+
+  async listExecutionLogs(
+    tenantId: string,
+    params: { applicationId?: string; formId?: string; ruleId?: string; limit?: number },
+  ): Promise<BusinessRuleExecutionLogEntity[]> {
+    const where: Record<string, unknown> = { tenantId };
+    if (params.applicationId) where.applicationId = params.applicationId;
+    if (params.formId) where.formId = params.formId;
+    if (params.ruleId) where.ruleId = params.ruleId;
+    const take = Math.min(Math.max(params.limit || 50, 1), 200);
+
+    return await this.executionLogRepository.find({
+      where,
+      order: { createdAt: 'DESC' },
+      take,
+    });
   }
 }
 

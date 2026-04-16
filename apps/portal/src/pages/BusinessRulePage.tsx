@@ -36,7 +36,15 @@ const { Title } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
 
-export const BusinessRulePage = () => {
+interface BusinessRulePageProps {
+  pageTitle?: string;
+  createButtonText?: string;
+}
+
+export const BusinessRulePage: React.FC<BusinessRulePageProps> = ({
+  pageTitle = "业务规则与自动化",
+  createButtonText = "新建规则",
+}) => {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const [rules, setRules] = useState<BusinessRuleResponse[]>([]);
@@ -224,14 +232,14 @@ export const BusinessRulePage = () => {
       >
         <Title level={4} style={{ margin: 0 }}>
           <ThunderboltOutlined style={{ marginRight: 8 }} />
-          业务规则与自动化
+          {pageTitle}
         </Title>
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => handleOpenDesigner()}
         >
-          新建规则
+          {createButtonText}
         </Button>
       </Header>
       <Content style={{ padding: 24, overflow: "auto" }}>

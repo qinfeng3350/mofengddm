@@ -45,6 +45,39 @@ export class BusinessRuleController {
     }));
   }
 
+  @Get('execution-logs')
+  async listExecutionLogs(
+    @Query('applicationId') applicationId: string,
+    @Query('formId') formId: string,
+    @Query('ruleId') ruleId: string,
+    @Query('limit') limit: string,
+    @Request() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || '1';
+    const logs = await this.businessRuleService.listExecutionLogs(tenantId, {
+      applicationId,
+      formId,
+      ruleId,
+      limit: limit ? parseInt(limit, 10) : 50,
+    });
+    return logs.map((log) => ({
+      id: log.id,
+      tenantId: log.tenantId,
+      applicationId: log.applicationId,
+      ruleId: log.ruleId,
+      ruleName: log.ruleName,
+      formId: log.formId,
+      recordId: log.recordId,
+      triggerEvent: log.triggerEvent,
+      status: log.status,
+      errorMessage: log.errorMessage,
+      durationMs: log.durationMs,
+      payloadSnapshot: log.payloadSnapshot,
+      createdAt: log.createdAt,
+      updatedAt: log.updatedAt,
+    }));
+  }
+
   @Get(':ruleId')
   async findOne(@Param('ruleId') ruleId: string, @Request() req: any) {
     const tenantId = req.user?.tenantId || '1';

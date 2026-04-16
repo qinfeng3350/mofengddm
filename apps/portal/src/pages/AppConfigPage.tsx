@@ -183,8 +183,7 @@ export const AppConfigPage = () => {
                     return;
                   }
                   if (item.key === "自动化") {
-                    // 跳转到业务规则页面
-                    navigate(`/app/${appId}/rules`);
+                    navigate(`/app/${appId}/automation`);
                     return;
                   }
                   setActiveMenu(item.key);

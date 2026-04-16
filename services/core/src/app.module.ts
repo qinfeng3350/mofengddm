@@ -37,6 +37,7 @@ import {
   WorkflowDefinitionEntity,
   WorkflowInstanceEntity,
   BusinessRuleEntity,
+          BusinessRuleExecutionLogEntity,
   OperationLogEntity,
   LoginLogEntity,
   EnterpriseLogEntity,

@@ -4,6 +4,23 @@ import { apiClient } from "./client";
 
 export type BusinessRuleResponse = z.infer<typeof BusinessRuleSchema>;
 
+export interface BusinessRuleExecutionLog {
+  id: string;
+  tenantId: string;
+  applicationId?: string | null;
+  ruleId: string;
+  ruleName?: string;
+  formId: string;
+  recordId: string;
+  triggerEvent: "create" | "update" | "delete" | "statusChange";
+  status: "success" | "failed" | "skipped";
+  errorMessage?: string | null;
+  durationMs?: number | null;
+  payloadSnapshot?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const businessRuleApi = {
   /**
    * 获取应用下的所有业务规则
@@ -61,6 +78,18 @@ export const businessRuleApi = {
     enabled: boolean,
   ): Promise<BusinessRuleResponse> => {
     return await apiClient.patch(`/business-rules/${ruleId}/enabled`, { enabled });
+  },
+
+  getExecutionLogs: async (params: {
+    applicationId?: string;
+    formId?: string;
+    ruleId?: string;
+    limit?: number;
+  }): Promise<BusinessRuleExecutionLog[]> => {
+    const response = await apiClient.get("/business-rules/execution-logs", {
+      params,
+    });
+    return Array.isArray(response) ? response : [];
   },
 };
 

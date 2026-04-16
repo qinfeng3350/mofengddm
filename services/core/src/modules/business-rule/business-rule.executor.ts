@@ -2,10 +2,12 @@ import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BusinessRuleEntity } from '../../database/entities/business-rule.entity';
+import { BusinessRuleExecutionLogEntity } from '../../database/entities/business-rule-execution-log.entity';
 import { FormDataEntity } from '../../database/entities/form-data.entity';
 import { FormDefinitionEntity } from '../../database/entities/form-definition.entity';
 import { FormDataService } from '../form-data/form-data.service';
 import { OperationLogService } from '../operation-log/operation-log.service';
+import axios from 'axios';
 
 interface RuleContext {
   formId: string;
@@ -25,6 +27,8 @@ export class BusinessRuleExecutorService {
   constructor(
     @InjectRepository(BusinessRuleEntity)
     private businessRuleRepository: Repository<BusinessRuleEntity>,
+    @InjectRepository(BusinessRuleExecutionLogEntity)
+    private executionLogRepository: Repository<BusinessRuleExecutionLogEntity>,
     @InjectRepository(FormDataEntity)
     private formDataRepository: Repository<FormDataEntity>,
     @InjectRepository(FormDefinitionEntity)
@@ -84,6 +88,7 @@ export class BusinessRuleExecutorService {
 
       // 执行每个规则
       for (const rule of rules) {
+        const startedAt = Date.now();
         try {
           this.logger.log(`[业务规则] 执行规则: ${rule.ruleName} (${rule.ruleId})`);
           
@@ -100,9 +105,46 @@ export class BusinessRuleExecutorService {
               triggerEvent: event,
             });
             this.logger.log(`[业务规则] 规则 ${rule.ruleId} 执行完成`);
+            await this.executionLogRepository.save(
+              this.executionLogRepository.create({
+                tenantId: enhancedContext.tenantId,
+                applicationId: rule.applicationId ?? null,
+                ruleId: rule.ruleId,
+                ruleName: rule.ruleName,
+                formId: enhancedContext.formId,
+                recordId: enhancedContext.recordId,
+                triggerEvent: event,
+                status: 'success',
+                durationMs: Date.now() - startedAt,
+                payloadSnapshot: {
+                  dataKeys: Object.keys(enhancedContext.data || {}),
+                },
+              }),
+            );
           }
         } catch (error) {
           this.logger.error(`[业务规则] 执行规则 ${rule.ruleId} 失败:`, error);
+          try {
+            await this.executionLogRepository.save(
+              this.executionLogRepository.create({
+                tenantId: enhancedContext.tenantId,
+                applicationId: rule.applicationId ?? null,
+                ruleId: rule.ruleId,
+                ruleName: rule.ruleName,
+                formId: enhancedContext.formId,
+                recordId: enhancedContext.recordId,
+                triggerEvent: event,
+                status: 'failed',
+                durationMs: Date.now() - startedAt,
+                errorMessage: (error as Error)?.message || String(error),
+                payloadSnapshot: {
+                  dataKeys: Object.keys(enhancedContext.data || {}),
+                },
+              }),
+            );
+          } catch (logError) {
+            this.logger.error('[业务规则] 写入执行日志失败:', logError);
+          }
           // 继续执行下一个规则，不中断
         }
       }
@@ -207,8 +249,77 @@ export class BusinessRuleExecutorService {
         this.logger.log(`[业务规则] 删除记录: ${action.targetRecordId}`);
         await this.deleteTargetRecord(action, context);
         break;
+      case 'callApi':
+        await this.callExternalApi(action, context);
+        break;
       default:
         this.logger.warn(`[业务规则] 未知的动作类型: ${action.type}`);
+    }
+  }
+
+  /**
+   * 调用外部 API（Webhook / HTTP 接口）
+   * action.api 约定结构：
+   * {
+   *   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+   *   url: string,
+   *   headers?: Record<string, string>,
+   *   bodyTemplate?: any
+   * }
+   */
+  private async callExternalApi(
+    action: BusinessRuleEntity['actions'][0],
+    context: RuleContext,
+  ): Promise<void> {
+    const config = (action as any).api || {};
+    const method = String(config.method || 'POST').toUpperCase();
+    const url = String(config.url || '');
+
+    if (!url) {
+      this.logger.warn('[业务规则] callApi 动作缺少 url，已跳过');
+      return;
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(config.headers || {}),
+    };
+
+    // 简单模板：把 context 展开到 body 里，bodyTemplate 可覆盖/扩展
+    const basePayload = {
+      formId: context.formId,
+      recordId: context.recordId,
+      tenantId: context.tenantId,
+      userId: context.userId,
+      triggerEvent: context.triggerEvent,
+      data: context.data,
+      ruleId: context.ruleId,
+      ruleName: context.ruleName,
+    };
+
+    const mergedBodyConfig =
+      config.bodyTemplate && typeof config.bodyTemplate === 'object'
+        ? config.bodyTemplate
+        : config.body && typeof config.body === 'object'
+          ? config.body
+          : null;
+
+    const body = mergedBodyConfig ? { ...basePayload, ...mergedBodyConfig } : basePayload;
+
+    try {
+      this.logger.log(`[业务规则] 调用外部 API: ${method} ${url}`);
+      await axios.request({
+        method: method as any,
+        url,
+        headers,
+        data: method === 'GET' || method === 'DELETE' ? undefined : body,
+        params: method === 'GET' || method === 'DELETE' ? body : undefined,
+        timeout: typeof config.timeout === 'number' ? config.timeout : 10000,
+      });
+      this.logger.log('[业务规则] 外部 API 调用成功');
+    } catch (error) {
+      this.logger.error('[业务规则] 外部 API 调用失败:', (error as any)?.message || error);
+      // 不抛出，让规则执行链路继续，由执行日志记录失败详情
     }
   }
 

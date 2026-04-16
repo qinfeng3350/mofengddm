@@ -319,6 +319,12 @@ export const BusinessRuleDesigner = ({
       type: "createRecord",
       targetFormId: "",
       fieldMapping: {},
+      api: {
+        url: "",
+        method: "POST",
+        headers: {},
+        body: {},
+      },
     };
     setActions([...actions, newAction]);
     form.setFieldValue("actions", [...actions, newAction]);
@@ -451,6 +457,10 @@ export const BusinessRuleDesigner = ({
                               // 切换类型时清空相关配置
                               subtableFieldId: value === 'forEachSubtable' ? action.subtableFieldId : undefined,
                               matchCondition: value !== 'forEachSubtable' ? undefined : action.matchCondition,
+                            api:
+                              value === 'callApi'
+                                ? action.api || { url: '', method: 'POST', headers: {}, body: {} }
+                                : undefined,
                             });
                           }}
                         >
@@ -711,6 +721,95 @@ export const BusinessRuleDesigner = ({
                             提示：选择"累加"时，会自动将子表中的数量累加到目标记录的对应字段上
                           </Text>
                         )}
+                      </div>
+                    )}
+
+                    {/* callApi：外部接口调用配置 */}
+                    {action.type === "callApi" && (
+                      <div style={{ marginTop: 16 }}>
+                        <Text strong>API 配置：</Text>
+                        <Row gutter={16} style={{ marginTop: 8 }}>
+                          <Col span={8}>
+                            <Form.Item label="请求方法">
+                              <Select
+                                value={action.api?.method || "POST"}
+                                onChange={(val) => {
+                                  handleUpdateAction(index, {
+                                    api: {
+                                      ...(action.api || {}),
+                                      method: val,
+                                    } as any,
+                                  });
+                                }}
+                              >
+                                <Option value="GET">GET</Option>
+                                <Option value="POST">POST</Option>
+                                <Option value="PUT">PUT</Option>
+                                <Option value="DELETE">DELETE</Option>
+                              </Select>
+                            </Form.Item>
+                          </Col>
+                          <Col span={16}>
+                            <Form.Item label="请求 URL">
+                              <Input
+                                value={action.api?.url || ""}
+                                onChange={(e) => {
+                                  handleUpdateAction(index, {
+                                    api: {
+                                      ...(action.api || {}),
+                                      url: e.target.value,
+                                    } as any,
+                                  });
+                                }}
+                                placeholder="例如：https://example.com/hook"
+                              />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+
+                        <div style={{ marginTop: 8 }}>
+                          <Form.Item label="请求 Headers（JSON）">
+                            <Input.TextArea
+                              rows={3}
+                              value={JSON.stringify(action.api?.headers || {}, null, 2)}
+                              onChange={(e) => {
+                                try {
+                                  const parsed = JSON.parse(e.target.value || "{}");
+                                  handleUpdateAction(index, {
+                                    api: {
+                                      ...(action.api || {}),
+                                      headers: parsed,
+                                    } as any,
+                                  });
+                                } catch {
+                                  message.error("headers 必须是合法 JSON");
+                                }
+                              }}
+                            />
+                          </Form.Item>
+                        </div>
+
+                        <div style={{ marginTop: 8 }}>
+                          <Form.Item label="请求 Body（JSON）">
+                            <Input.TextArea
+                              rows={5}
+                              value={JSON.stringify(action.api?.body || {}, null, 2)}
+                              onChange={(e) => {
+                                try {
+                                  const parsed = JSON.parse(e.target.value || "{}");
+                                  handleUpdateAction(index, {
+                                    api: {
+                                      ...(action.api || {}),
+                                      body: parsed,
+                                    } as any,
+                                  });
+                                } catch {
+                                  message.error("body 必须是合法 JSON");
+                                }
+                              }}
+                            />
+                          </Form.Item>
+                        </div>
                       </div>
                     )}
                 </Card>

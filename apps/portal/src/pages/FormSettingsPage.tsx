@@ -32,6 +32,7 @@ import { useFormDesignerStore } from "@/modules/form-designer/store/useFormDesig
 import { message } from "antd";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import dayjs from "dayjs";
 
 const { Text } = Typography;
 const { Option, OptGroup } = Select;
@@ -162,7 +163,7 @@ export const FormSettingsPage: React.FC<FormSettingsPageProps> = ({
       case "function-buttons":
         return <FunctionButtonsSettings formId={formId} />;
       case "automation":
-        return <AutomationSettings formId={formId} />;
+        return <AutomationSettings formId={formId} appId={appId} />;
       case "import-rules":
         return <ImportRulesSettings formId={formId} />;
       case "ai-filling":
@@ -995,8 +996,20 @@ const FunctionListDrawer: React.FC<{
 const BusinessRuleSettings: React.FC<{
   formId?: string;
   appId?: string;
-}> = ({ formId, appId }) => {
+  title?: string;
+  introText?: string;
+  emptyDescription?: string;
+  createButtonText?: string;
+}> = ({
+  formId,
+  appId,
+  title = "业务规则",
+  introText = "说明：当数据生效或者作废时可对目标表数据进行新增/更新/删除操作",
+  emptyDescription = "您还没添加任何业务规则",
+  createButtonText = "新建规则",
+}) => {
   const [modalVisible, setModalVisible] = useState(false);
+  const [executionLogVisible, setExecutionLogVisible] = useState(false);
   const [form] = Form.useForm();
   const functionCode = Form.useWatch("functionCode", form);
   const [insertPosition, setInsertPosition] = useState<number | null>(null);
@@ -1097,6 +1110,17 @@ const BusinessRuleSettings: React.FC<{
 
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
 
+  const { data: executionLogs = [], isLoading: executionLogsLoading, refetch: refetchExecutionLogs } = useQuery({
+    queryKey: ["businessRuleExecutionLogs", appId, formId],
+    queryFn: () =>
+      businessRuleApi.getExecutionLogs({
+        applicationId: appId,
+        formId,
+        limit: 100,
+      }),
+    enabled: executionLogVisible && !!appId,
+  });
+
   const handleOpenModal = (rule?: any) => {
     setModalVisible(true);
     form.resetFields();
@@ -1119,6 +1143,69 @@ const BusinessRuleSettings: React.FC<{
   };
 
   const queryClient = useQueryClient();
+
+  const executionLogColumns = [
+    {
+      title: "时间",
+      dataIndex: "createdAt",
+      key: "createdAt",
+      width: 180,
+      render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm:ss"),
+    },
+    {
+      title: "规则名称",
+      dataIndex: "ruleName",
+      key: "ruleName",
+      width: 220,
+      render: (value: string, record: any) => value || record.ruleId,
+    },
+    {
+      title: "触发事件",
+      dataIndex: "triggerEvent",
+      key: "triggerEvent",
+      width: 120,
+      render: (value: string) => {
+        const eventMap: Record<string, string> = {
+          create: "新增",
+          update: "更新",
+          delete: "删除",
+          statusChange: "状态变化",
+        };
+        return eventMap[value] || value;
+      },
+    },
+    {
+      title: "执行状态",
+      dataIndex: "status",
+      key: "status",
+      width: 120,
+      render: (value: string) => (
+        <Tag color={value === "success" ? "green" : value === "failed" ? "red" : "default"}>
+          {value === "success" ? "成功" : value === "failed" ? "失败" : "跳过"}
+        </Tag>
+      ),
+    },
+    {
+      title: "耗时",
+      dataIndex: "durationMs",
+      key: "durationMs",
+      width: 100,
+      render: (value?: number | null) => (value != null ? `${value}ms` : "-"),
+    },
+    {
+      title: "记录ID",
+      dataIndex: "recordId",
+      key: "recordId",
+      width: 220,
+      ellipsis: true,
+    },
+    {
+      title: "错误信息",
+      dataIndex: "errorMessage",
+      key: "errorMessage",
+      render: (value?: string | null) => value || "-",
+    },
+  ];
 
   const saveRuleMutation = useMutation({
     mutationFn: async (ruleData: any) => {
@@ -1808,16 +1895,23 @@ const BusinessRuleSettings: React.FC<{
 
   return (
     <>
-      <SettingsPageLayout title="业务规则">
+      <SettingsPageLayout title={title}>
         <Card style={{ height: "100%", display: "flex", flexDirection: "column", padding: 0 }}>
           {/* 顶部按钮栏 */}
           <div style={{ padding: "16px 24px", borderBottom: "1px solid #f0f0f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 14, color: "#666" }}>
-              说明：当数据生效或者作废时可对目标表数据进行新增/更新/删除操作
+              {introText}
             </div>
             <Space>
-              <Button>执行日志</Button>
-              <Button type="primary" onClick={() => handleOpenModal()}>新建规则</Button>
+              <Button
+                onClick={() => {
+                  setExecutionLogVisible(true);
+                  void refetchExecutionLogs();
+                }}
+              >
+                执行日志
+              </Button>
+              <Button type="primary" onClick={() => handleOpenModal()}>{createButtonText}</Button>
             </Space>
           </div>
 
@@ -1826,7 +1920,7 @@ const BusinessRuleSettings: React.FC<{
             {currentFormRules.length === 0 ? (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
                 <Empty
-                  description="您还没添加任何业务规则"
+                  description={emptyDescription}
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
                 >
                   <Button type="primary" onClick={() => handleOpenModal()}>立即设置</Button>
@@ -2225,6 +2319,28 @@ const BusinessRuleSettings: React.FC<{
             切换到高级模式
           </Button>
         </div>
+      </Modal>
+
+      <Modal
+        title="执行日志"
+        open={executionLogVisible}
+        onCancel={() => setExecutionLogVisible(false)}
+        footer={null}
+        width={1080}
+        destroyOnHidden
+      >
+        <Table
+          columns={executionLogColumns}
+          dataSource={executionLogs}
+          rowKey="id"
+          loading={executionLogsLoading}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: false,
+            showTotal: (total) => `共 ${total} 条`,
+          }}
+          scroll={{ x: 980 }}
+        />
       </Modal>
 
       {/* 高级模式：精确模仿参考图片的三块布局 */}
@@ -3509,13 +3625,16 @@ const FunctionButtonsSettings: React.FC<{ formId?: string }> = ({ formId }) => {
 };
 
 // 自动化设置组件
-const AutomationSettings: React.FC<{ formId?: string }> = ({ formId }) => {
+const AutomationSettings: React.FC<{ formId?: string; appId?: string }> = ({ formId, appId }) => {
   return (
-    <SettingsPageLayout title="自动化">
-      <Card style={{ height: "100%" }}>
-        <Empty description="自动化设置功能开发中..." />
-      </Card>
-    </SettingsPageLayout>
+    <BusinessRuleSettings
+      formId={formId}
+      appId={appId}
+      title="自动化"
+      introText="说明：可在当前表单配置新增、修改、删除、流程状态变化等自动触发规则，联动其它表单数据。"
+      emptyDescription="您还没添加任何自动化"
+      createButtonText="新建自动化"
+    />
   );
 };
 

@@ -10,6 +10,7 @@ export * from './form-definition.entity';
 export * from './form-data.entity';
 export * from './workflow-definition.entity';
 export * from './business-rule.entity';
+export * from './business-rule-execution-log.entity';
 export * from './workflow-instance.entity';
 export * from './operation-log.entity';
 export * from './login-log.entity';
