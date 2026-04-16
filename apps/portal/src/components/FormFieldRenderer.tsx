@@ -1268,32 +1268,36 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
               };
 
               const columns = [
-                {
-                  title: (
-                    <Checkbox
-                      checked={allCurrentPageSelected}
-                      indeterminate={currentPageSelectedKeys.length > 0 && !allCurrentPageSelected}
-                      onChange={(e) => handleSelectAll(e.target.checked)}
-                    />
-                  ),
-                  key: "checkbox",
-                  width: 50,
-                  render: (_: any, record: any, index: number) => {
-                    const actualIndex = startIndex + index;
-                    return (
-                      <Checkbox
-                        checked={selectedRowKeys.includes(actualIndex)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedRowKeys([...selectedRowKeys, actualIndex]);
-                          } else {
-                            setSelectedRowKeys(selectedRowKeys.filter((key) => key !== actualIndex));
-                          }
-                        }}
-                      />
-                    );
-                  },
-                },
+                ...(!isDisabled
+                  ? [
+                      {
+                        title: (
+                          <Checkbox
+                            checked={allCurrentPageSelected}
+                            indeterminate={currentPageSelectedKeys.length > 0 && !allCurrentPageSelected}
+                            onChange={(e) => handleSelectAll(e.target.checked)}
+                          />
+                        ),
+                        key: "checkbox",
+                        width: 50,
+                        render: (_: any, record: any, index: number) => {
+                          const actualIndex = startIndex + index;
+                          return (
+                            <Checkbox
+                              checked={selectedRowKeys.includes(actualIndex)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedRowKeys([...selectedRowKeys, actualIndex]);
+                                } else {
+                                  setSelectedRowKeys(selectedRowKeys.filter((key) => key !== actualIndex));
+                                }
+                              }}
+                            />
+                          );
+                        },
+                      },
+                    ]
+                  : []),
                 {
                   title: "",
                   key: "index",
@@ -1633,36 +1637,40 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                     }
                   },
                 })),
-                {
-                  title: "操作",
-                  key: "action",
-                  width: 80,
-                  render: (_: any, record: any, index: number) => {
-                    const actualIndex = startIndex + index;
-                    return (
-                      <Dropdown
-                        menu={{
-                          items: [
-                            {
-                              key: "delete",
-                              label: "删除",
-                              danger: true,
-                              icon: <DeleteOutlined />,
-                              onClick: () => {
-                                    if (isDisabled) return;
-                                const newData = dataSource.filter((_: any, i: number) => i !== actualIndex);
-                                formField.onChange(newData);
-                              },
-                            },
-                          ],
-                        }}
-                        trigger={["click"]}
-                      >
-                        <Button type="text" icon={<MoreOutlined />} />
-                      </Dropdown>
-                    );
-                  },
-                },
+                ...(!isDisabled
+                  ? [
+                      {
+                        title: "操作",
+                        key: "action",
+                        width: 80,
+                        render: (_: any, record: any, index: number) => {
+                          const actualIndex = startIndex + index;
+                          return (
+                            <Dropdown
+                              menu={{
+                                items: [
+                                  {
+                                    key: "delete",
+                                    label: "删除",
+                                    danger: true,
+                                    icon: <DeleteOutlined />,
+                                    onClick: () => {
+                                      if (isDisabled) return;
+                                      const newData = dataSource.filter((_: any, i: number) => i !== actualIndex);
+                                      formField.onChange(newData);
+                                    },
+                                  },
+                                ],
+                              }}
+                              trigger={["click"]}
+                            >
+                              <Button type="text" icon={<MoreOutlined />} />
+                            </Dropdown>
+                          );
+                        },
+                      },
+                    ]
+                  : []),
               ];
 
               return (
@@ -1674,11 +1682,10 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                 >
                   <div
                     style={{
-                      border: "1px solid #e6eaf2",
+                      border: "1px solid #f0f0f0",
                       borderRadius: 10,
                       background: "#fff",
                       overflow: "hidden",
-                      boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
                     }}
                   >
                     {subtableFields.length > 0 ? (
@@ -1705,68 +1712,70 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                         {expanded && (
                           <>
                             {/* 操作按钮栏 */}
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "10px 14px",
-                                borderBottom: "1px solid #eef2f7",
-                                background: "#fcfdff",
-                              }}
-                            >
-                              <Space size={10}>
-                                <Button
-                                  type="primary"
-                                  size="small"
-                                  icon={<PlusOutlined />}
-                                  onClick={() => {
-                                    if (isDisabled) return;
-                                    handleAddRow();
-                                  }}
-                                  disabled={isDisabled}
-                                  style={{ borderRadius: 6 }}
-                                >
-                                  新增
-                                </Button>
-                                <Button
-                                  size="small"
-                                  icon={<DownloadOutlined />}
-                                  onClick={() => {
-                                    if (isDisabled) return;
-                                    handleImport();
-                                  }}
-                                  disabled={isDisabled}
-                                  style={{ borderRadius: 6 }}
-                                >
-                                  导入
-                                </Button>
-                                <Button
-                                  size="small"
-                                  danger
-                                  icon={<DeleteOutlined />}
-                                  onClick={() => {
-                                    if (isDisabled) return;
-                                    handleDeleteRows();
-                                  }}
-                                  disabled={isDisabled || selectedRowKeys.length === 0}
-                                  style={{ borderRadius: 6 }}
-                                >
-                                  删除
-                                </Button>
-                                <Dropdown
-                                  menu={{
-                                    items: subtableFields.map((subField: any) => ({
-                                      key: subField.fieldId,
-                                      label: subField.label,
-                                    })),
-                                  }}
-                                  trigger={["click"]}
-                                >
-                                  <Button size="small" style={{ borderRadius: 6 }}>选择筛选字段</Button>
-                                </Dropdown>
-                              </Space>
-                            </div>
+                            {!isDisabled && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  padding: "10px 14px",
+                                  borderBottom: "1px solid #eef2f7",
+                                  background: "#fff",
+                                }}
+                              >
+                                <Space size={10}>
+                                  <Button
+                                    type="primary"
+                                    size="small"
+                                    icon={<PlusOutlined />}
+                                    onClick={() => {
+                                      if (isDisabled) return;
+                                      handleAddRow();
+                                    }}
+                                    disabled={isDisabled}
+                                    style={{ borderRadius: 6 }}
+                                  >
+                                    新增
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    icon={<DownloadOutlined />}
+                                    onClick={() => {
+                                      if (isDisabled) return;
+                                      handleImport();
+                                    }}
+                                    disabled={isDisabled}
+                                    style={{ borderRadius: 6 }}
+                                  >
+                                    导入
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    danger
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => {
+                                      if (isDisabled) return;
+                                      handleDeleteRows();
+                                    }}
+                                    disabled={isDisabled || selectedRowKeys.length === 0}
+                                    style={{ borderRadius: 6 }}
+                                  >
+                                    删除
+                                  </Button>
+                                  <Dropdown
+                                    menu={{
+                                      items: subtableFields.map((subField: any) => ({
+                                        key: subField.fieldId,
+                                        label: subField.label,
+                                      })),
+                                    }}
+                                    trigger={["click"]}
+                                  >
+                                    <Button size="small" style={{ borderRadius: 6 }}>选择筛选字段</Button>
+                                  </Dropdown>
+                                </Space>
+                              </div>
+                            )}
 
                             {/* 表格 */}
                             {paginatedData.length > 0 ? (
@@ -1776,19 +1785,11 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     dataSource={paginatedData}
                                     columns={columns}
                                     pagination={false}
-                                    size="middle"
+                                    size={isDisabled ? "small" : "middle"}
                                     rowKey={(record) => String((record as any).__rowKey)}
                                     style={{ margin: 0 }}
-                                    bordered
+                                    bordered={!isDisabled}
                                     tableLayout="fixed"
-                                    rowClassName={(_, index) =>
-                                      index % 2 === 0 ? "runtime-subtable-row-even" : "runtime-subtable-row-odd"
-                                    }
-                                    onRow={(_, index) => ({
-                                      style: {
-                                        background: (index || 0) % 2 === 0 ? "#ffffff" : "#fafcff",
-                                      },
-                                    })}
                                     scroll={{ x: "max-content" }}
                                   />
                                 </div>
@@ -1799,12 +1800,12 @@ export const FormFieldRenderer = ({ field, control, disabled, formValues = {}, f
                                     alignItems: "center",
                                     justifyContent: "space-between",
                                     padding: "12px 16px",
-                                    borderTop: "1px solid #eef2f7",
-                                    background: "#f8fafc",
+                                    borderTop: "1px solid #f0f0f0",
+                                    background: "#fff",
                                   }}
                                 >
                                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                                    已选{selectedRowKeys.length}条
+                                    {isDisabled ? "" : `已选${selectedRowKeys.length}条`}
                                   </Typography.Text>
                                   <Space>
                                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>

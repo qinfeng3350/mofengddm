@@ -31,6 +31,10 @@ import {
   QuestionCircleOutlined,
   ContactsOutlined,
   BellOutlined,
+  ShareAltOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import { UserAccountDropdown } from "@/components/UserAccountDropdown";
 import { FormDataList } from "@/components/FormDataList";
@@ -275,6 +279,44 @@ export const RuntimeListPage = () => {
   const effectiveFormId = selectedFormId || viewingRecord?.formId || "";
 
   const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [viewFullscreen, setViewFullscreen] = useState(false);
+  const viewBodyRef = useRef<HTMLDivElement | null>(null);
+
+  const handleShareView = async () => {
+    if (!viewingRecordId) return;
+    const params = new URLSearchParams();
+    if (effectiveFormId) params.set("formId", effectiveFormId);
+    params.set("recordId", viewingRecordId);
+    const shareUrl = `${window.location.origin}/runtime/list?${params.toString()}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      message.success("分享链接已复制");
+    } catch {
+      message.info(shareUrl);
+    }
+  };
+
+  const handleToggleViewFullscreen = async () => {
+    const el = viewBodyRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await el.requestFullscreen();
+      }
+    } catch {
+      message.warning("当前环境不支持全屏");
+    }
+  };
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setViewFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
 
   // 查看/打印时按记录上的 formId 拉定义（避免未选中左侧表单时 selectedFormId 为空）
   const { data: formDefinitionForEffective } = useQuery({
@@ -2903,13 +2945,15 @@ export const RuntimeListPage = () => {
 
       {/* 查看详情抽屉 */}
       <ResizableDrawer
-        title={`${formDefinition?.formName || "未命名表单"}-查看`}
+        title={`${formDefinition?.formName || "未命名表单"}`}
         open={viewDrawerOpen}
         onClose={() => {
           setViewDrawerOpen(false);
           setViewingRecordId(null);
         }}
+        closable={false}
         destroyOnHidden
+        bodyStyle={{ overflowX: "hidden", padding: 0 }}
               extra={
                 <Space>
                   {!hideEditWhileWorkflowRunning && (
@@ -2966,34 +3010,107 @@ export const RuntimeListPage = () => {
                 删除
                   </Button>
             </Popconfirm>
+                  <Dropdown
+                    menu={{
+                      items: [
+                        {
+                          key: "share",
+                          label: "分享",
+                          icon: <ShareAltOutlined />,
+                          onClick: handleShareView,
+                        },
+                        {
+                          key: "fullscreen",
+                          label: viewFullscreen ? "退出全屏" : "全屏",
+                          icon: viewFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />,
+                          onClick: handleToggleViewFullscreen,
+                        },
+                      ],
+                    }}
+                    trigger={["click"]}
+                  >
+                    <Button type="text" icon={<EllipsisOutlined />} />
+                  </Dropdown>
+                  <Button type="text" icon={<ShareAltOutlined />} onClick={handleShareView} />
                   <Button
-              type="text"
-              icon={<CommentOutlined />}
-              onClick={() => {
-                message.info("评论功能待实现");
-              }}
-            >
-              评论
-                  </Button>
+                    type="text"
+                    icon={viewFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                    onClick={handleToggleViewFullscreen}
+                  />
+                  <Button
+                    type="text"
+                    icon={<CloseOutlined />}
+                    onClick={() => {
+                      setViewDrawerOpen(false);
+                      setViewingRecordId(null);
+                    }}
+                  />
                 </Space>
               }
             >
         {viewingRecordId && (
-          <>
-            {effectiveFormId ? (
-              <FormRenderer
-                formId={effectiveFormId}
-                recordId={viewingRecordId}
-                mode="view"
-              />
-            ) : (
-              <div style={{ padding: 24, textAlign: "center" }}>正在加载表单定义...</div>
-            )}
-            <div style={{ marginTop: 16 }}>
-              <WorkflowInstancePanel recordId={viewingRecordId} />
-            </div>
-          </>
+          <div
+            ref={viewBodyRef}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0,1fr) 52px",
+              alignItems: "stretch",
+              minHeight: "100%",
+              width: "100%",
+              overflowX: "hidden",
+            }}
+          >
+            <div
+              style={{
+                background: "#fff",
+                padding: 12,
+                minWidth: 0,
+                overflowX: "hidden",
+              }}
+            >
+              {effectiveFormId ? (
+                <FormRenderer
+                  formId={effectiveFormId}
+                  recordId={viewingRecordId}
+                  mode="view"
+                />
+              ) : (
+                <div style={{ padding: 24, textAlign: "center" }}>正在加载表单定义...</div>
               )}
+              <div style={{ marginTop: 16 }}>
+                <WorkflowInstancePanel recordId={viewingRecordId} />
+              </div>
+            </div>
+
+            <div
+              style={{
+                borderLeft: "1px solid #f0f0f0",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "center",
+                paddingTop: 12,
+                marginLeft: 0,
+              }}
+            >
+              <Button
+                type="text"
+                icon={<CommentOutlined />}
+                onClick={() => message.info("评论功能待实现")}
+                style={{
+                  height: 86,
+                  borderRadius: 8,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                }}
+              >
+                评论
+              </Button>
+            </div>
+          </div>
+        )}
       </ResizableDrawer>
 
       <PrintRecordModal
