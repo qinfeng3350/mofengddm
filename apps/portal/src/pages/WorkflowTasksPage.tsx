@@ -8,6 +8,7 @@ import { apiClient } from "@/api/client";
 import { useAuthStore } from "@/store/useAuthStore";
 import { formDataApi } from "@/api/formData";
 import { formDefinitionApi } from "@/api/formDefinition";
+import { departmentApi } from "@/api/department";
 
 const { Title, Text } = Typography;
 
@@ -33,6 +34,11 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
     enabled: !!(task?.formId || formData?.formId),
     staleTime: 60_000,
   });
+  const { data: deptRes } = useQuery({
+    queryKey: ["task-card-departments"],
+    queryFn: () => departmentApi.getDepartments(),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const rendered = useMemo(() => {
     const instance: any = (workflowInstance as any)?.data ?? (workflowInstance as any) ?? {};
@@ -46,6 +52,16 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
 
     const fieldMap = new Map<string, string>();
     const fieldDefMap = new Map<string, any>();
+    const deptNameMap = new Map<string, string>();
+    const walkDept = (list: any[]) => {
+      (Array.isArray(list) ? list : []).forEach((d: any) => {
+        const id = String(d?.id ?? "").trim();
+        const name = String(d?.name ?? d?.title ?? "").trim();
+        if (id && name) deptNameMap.set(id, name);
+        if (Array.isArray(d?.children)) walkDept(d.children);
+      });
+    };
+    walkDept((deptRes as any)?.tree || (deptRes as any)?.data || []);
     const cfg: any = (formDefinition as any)?.config || {};
     const walk = (list: any[]) => {
       (Array.isArray(list) ? list : []).forEach((item: any) => {
@@ -123,6 +139,17 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
         }
         return mapSingle(rawValue);
       }
+      if (fieldType === "department") {
+        const mapDept = (v: any) => {
+          const s = String(v ?? "").trim();
+          if (!s) return "";
+          return deptNameMap.get(s) || s;
+        };
+        if (Array.isArray(rawValue)) {
+          return rawValue.map((v) => mapDept(v)).filter(Boolean).join("、");
+        }
+        return mapDept(rawValue);
+      }
       return stringifyValue(rawValue);
     };
 
@@ -181,7 +208,7 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
     }
 
     return { title, details, remark, submitterName };
-  }, [formData, formDefinition, workflowInstance, task]);
+  }, [deptRes, formData, formDefinition, workflowInstance, task]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
