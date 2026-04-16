@@ -550,12 +550,15 @@ export const HomePage = () => {
               onClick={() => navigate("/contacts")}
             />
 
-            <Button
-              type="text"
-              icon={<BellOutlined />}
-              style={{ fontSize: 18 }}
-              onClick={() => message.info("暂无通知")}
-            />
+            <Badge count={pendingTasks?.length || 0} overflowCount={99} size="small">
+              <Button
+                type="text"
+                icon={<BellOutlined />}
+                style={{ fontSize: 18 }}
+                title="待办通知"
+                onClick={() => navigate("/workflow/tasks?tab=pending")}
+              />
+            </Badge>
             <Dropdown
               menu={{ items: userMenuItems }}
               placement="bottomRight"

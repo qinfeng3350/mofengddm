@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { Layout, Input, Button, Space, message, Drawer, Dropdown, Avatar, Typography, Modal, Form, Table, Popconfirm, Spin, Card } from "antd";
+import { Layout, Input, Button, Space, message, Drawer, Dropdown, Avatar, Typography, Modal, Form, Table, Popconfirm, Spin, Card, Badge } from "antd";
 import {
   PlusOutlined,
   DownloadOutlined, 
@@ -28,6 +28,9 @@ import {
   CaretRightOutlined,
   EllipsisOutlined,
   HomeOutlined,
+  QuestionCircleOutlined,
+  ContactsOutlined,
+  BellOutlined,
 } from "@ant-design/icons";
 import { UserAccountDropdown } from "@/components/UserAccountDropdown";
 import { FormDataList } from "@/components/FormDataList";
@@ -249,6 +252,19 @@ export const RuntimeListPage = () => {
   const [datavLoading, setDatavLoading] = useState(false);
   const [datavChartData, setDatavChartData] = useState<Record<string, any>>({});
   const [datavTableDataMap, setDatavTableDataMap] = useState<Record<string, { columns: any[]; data: any[] }>>({});
+  const { data: rawPendingTasks = [] } = useQuery({
+    queryKey: ["workflow", "tasks", "pending", "runtime-header"],
+    queryFn: () => workflowApi.listTasks("pending"),
+    staleTime: 30_000,
+  });
+  const pendingTaskCount = useMemo(() => {
+    const uid = String(user?.id || "");
+    if (!uid) return 0;
+    return (Array.isArray(rawPendingTasks) ? rawPendingTasks : []).filter((task: any) => {
+      const ids: any[] = task?.assignees?.values || [];
+      return ids.map(String).includes(uid);
+    }).length;
+  }, [rawPendingTasks, user?.id]);
 
   // 若从 URL 直接携带 recordId 打开抽屉，但未选择表单，则根据记录拉取其 formId
   const { data: viewingRecord } = useQuery({
@@ -1442,6 +1458,34 @@ export const RuntimeListPage = () => {
           )}
         </Space>
         <Space>
+          <Dropdown
+            placement="bottomRight"
+            trigger={["click"]}
+            menu={{
+              items: [
+                { key: "docs-user", label: "使用文档", onClick: () => navigate("/docs/user") },
+                { key: "docs-dev", label: "开发文档", onClick: () => navigate("/docs/dev") },
+                { key: "docs-changelog", label: "更新日志", onClick: () => navigate("/docs/changelog") },
+                { key: "docs-api", label: "接口文档", onClick: () => navigate("/docs/api") },
+              ],
+            }}
+          >
+            <Button type="text" icon={<QuestionCircleOutlined />} title="帮助中心" />
+          </Dropdown>
+          <Button
+            type="text"
+            icon={<ContactsOutlined />}
+            title="通讯录"
+            onClick={() => navigate("/contacts")}
+          />
+          <Badge count={pendingTaskCount} overflowCount={99} size="small">
+            <Button
+              type="text"
+              icon={<BellOutlined />}
+              title="待办通知"
+              onClick={() => navigate("/workflow/tasks?tab=pending")}
+            />
+          </Badge>
           <Button
             type="text" 
             icon={<AppstoreOutlined />}
