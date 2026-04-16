@@ -832,15 +832,22 @@ export class WorkflowService {
       }
       const todoDescription = messageLines.filter(Boolean).join('\n') || `流程记录：${params.recordId}`;
       const renderedTitle = todoTitleTemplate ? renderTemplate(todoTitleTemplate).trim() : '';
-      // 标题兜底带上核心信息，避免待办列表里只看到笼统文案
-      todoTitle = (renderedTitle || `待办：${formName || workflowName || params.nodeLabel}`)
+      // 钉钉待办「列表卡片」主要展示 subject；description 在多数客户端列表里不展示。
+      // 因此把消息表单内容/备注压成一行附在标题后（总长度不超过钉钉 subject 上限 1024）。
+      const DING_SUBJECT_MAX = 1024;
+      let subjectCore = (renderedTitle || `待办：${formName || workflowName || params.nodeLabel}`)
         .replace(/\s+/g, ' ')
         .trim();
       if (!renderedTitle && submitterName) {
-        todoTitle = `${todoTitle}｜${submitterName}`;
+        subjectCore = `${subjectCore}｜${submitterName}`;
       }
-      if (todoTitle.length > 80) {
-        todoTitle = `${todoTitle.slice(0, 80)}...`;
+      const summaryOneLine = messageLines
+        .filter(Boolean)
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .join(' · ');
+      todoTitle = summaryOneLine ? `${subjectCore}｜${summaryOneLine}` : subjectCore;
+      if (todoTitle.length > DING_SUBJECT_MAX) {
+        todoTitle = `${todoTitle.slice(0, DING_SUBJECT_MAX - 3)}...`;
       }
 
       const created = await this.dingtalkService.addToDoTask({
