@@ -36,7 +36,9 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
 
   const rendered = useMemo(() => {
     const instance: any = (workflowInstance as any)?.data ?? (workflowInstance as any) ?? {};
-    const meta: any = instance?.definition?.metadata?.dingtalk || {};
+    const metaFromInstance: any = instance?.definition?.metadata?.dingtalk || {};
+    const metaFromFormDef: any = (formDefinition as any)?.config?.workflow?.metadata?.dingtalk || {};
+    const meta: any = Object.keys(metaFromFormDef || {}).length ? metaFromFormDef : metaFromInstance;
     const formValues = (formData as any)?.data || {};
     const submitterName = String((formData as any)?.submitterName || task?.initiatorName || "").trim();
     const formName = String((formDefinition as any)?.formName || "").trim();
@@ -58,6 +60,19 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
           }
         }
         if (Array.isArray(item.children)) walk(item.children);
+        if (item.type === "subtable" && Array.isArray(item.subtableFields)) {
+          item.subtableFields.forEach((sf: any) => {
+            const sid = String(sf?.fieldId || "").trim();
+            const slabel = String(sf?.label || sf?.fieldName || "").trim();
+            if (!sid) return;
+            fieldMap.set(sid, sid);
+            fieldMap.set(`{${sid}}`, sid);
+            if (slabel) {
+              fieldMap.set(slabel, sid);
+              fieldMap.set(`{${slabel}}`, sid);
+            }
+          });
+        }
         if (Array.isArray(item.columns)) {
           item.columns.forEach((c: any) => Array.isArray(c?.children) && walk(c.children));
         }
@@ -89,34 +104,62 @@ const TaskRichText: React.FC<{ task: any }> = ({ task }) => {
     };
 
     const renderTpl = (tpl: string) => String(tpl || "").replace(/\{[^{}]+\}/g, (m) => resolveToken(m));
-    const title = String(task?.todoTitle || "").trim() || renderTpl(String(meta?.todoTitleTemplate || "")).trim() || String(task?.label || "流程待办");
+    const title =
+      renderTpl(String(meta?.todoTitleTemplate || "")).trim() ||
+      String(task?.todoTitle || "").trim() ||
+      String(task?.label || "流程待办");
 
-    const lines: string[] = [];
-    if (task?.todoDescription) {
-      lines.push(...String(task.todoDescription).split("\n").filter(Boolean));
-    } else {
-      const rows = Array.isArray(meta?.messageFormFields) ? meta.messageFormFields : [];
-      rows.forEach((r: any) => {
+    const rows = Array.isArray(meta?.messageFormFields) ? meta.messageFormFields : [];
+    const details = rows
+      .map((r: any) => {
         const label = String(r?.label || "").trim();
         const token = String(r?.token || "").trim();
-        if (!label || !token) return;
+        if (!label || !token) return null;
         const val = resolveToken(token);
-        if (val) lines.push(`${label}：${val}`);
-      });
-      if (meta?.appendRemark !== false && meta?.remark) {
-        const remark = renderTpl(String(meta.remark)).trim();
-        if (remark) lines.push(remark);
-      }
+        return { label, value: val || "-" };
+      })
+      .filter(Boolean) as Array<{ label: string; value: string }>;
+
+    const remark =
+      meta?.appendRemark !== false && meta?.remark
+        ? renderTpl(String(meta.remark)).trim()
+        : "";
+
+    // 兜底：配置为空时仍尽量显示后端已有描述
+    if (!details.length && task?.todoDescription) {
+      String(task.todoDescription)
+        .split("\n")
+        .map((x: string) => x.trim())
+        .filter(Boolean)
+        .forEach((line: string) => {
+          const idx = line.indexOf("：");
+          if (idx > 0) {
+            details.push({ label: line.slice(0, idx), value: line.slice(idx + 1) || "-" });
+          }
+        });
     }
-    return { title, summary: lines.slice(0, 2).join(" · "), submitterName };
+
+    return { title, details, remark, submitterName };
   }, [formData, formDefinition, workflowInstance, task]);
 
   return (
-    <>
-      <Text strong style={{ fontSize: 14 }}>{rendered.title}</Text>
-      {rendered.summary ? <Text type="secondary" style={{ fontSize: 12 }}>{rendered.summary}</Text> : null}
-      {rendered.submitterName ? <Text type="secondary" style={{ fontSize: 12 }}>发起人：{rendered.submitterName}</Text> : null}
-    </>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+      <Text strong style={{ fontSize: 18, lineHeight: 1.45, display: "block", whiteSpace: "normal" }}>
+        {rendered.title}
+      </Text>
+      {rendered.details.map((row, idx) => (
+        <Text
+          key={`${row.label}-${idx}`}
+          type="secondary"
+          style={{ fontSize: 13, lineHeight: 1.7, display: "block", whiteSpace: "normal" }}
+        >
+          {row.label}：{row.value}
+        </Text>
+      ))}
+      <Text style={{ fontSize: 13, lineHeight: 1.7, color: "#d46b08", display: "block", whiteSpace: "normal" }}>
+        {rendered.remark || (rendered.submitterName ? `由 ${rendered.submitterName} 提交` : "")}
+      </Text>
+    </div>
   );
 };
 
