@@ -17,6 +17,7 @@ import { CreateFormDefinitionDto } from './dto/create-form-definition.dto';
 import { ApplicationEntity } from '../../database/entities/application.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RoleService } from '../role/role.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller('api/form-definitions')
 @UseGuards(JwtAuthGuard)
@@ -71,7 +72,12 @@ export class FormDefinitionController {
   }
 
   @Get(':id')
+  @Public()
   async findOne(@Param('id') id: string, @Request() req: any) {
+    // 外链填单：未登录时按 formId 公开读取
+    if (!req?.user?.tenantId) {
+      return this.formDefinitionService.findOnePublic(id);
+    }
     const { tenantId } = this.resolveTenantAndUser(req);
     return this.formDefinitionService.findOne(id, tenantId);
   }

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Put, Body, Param, Delete, Req, UseGuards } from 
 import { FormDataService } from './form-data.service';
 import { SubmitFormDataDto } from './dto/submit-form-data.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller(['api/form-data', 'form-data'])
 export class FormDataController {
@@ -14,10 +15,13 @@ export class FormDataController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @Public()
   async submit(@Body() submitDto: SubmitFormDataDto, @Req() req: any) {
-    const { userId, userName } = this.actor(req);
-    return this.formDataService.submit(submitDto, userId, userName);
+    const anonymous = !req?.user;
+    const { userId, userName } = anonymous
+      ? { userId: 'external-user', userName: '外部用户' }
+      : this.actor(req);
+    return this.formDataService.submit(submitDto, userId, userName, { anonymous });
   }
 
   @Get('form/:formId')

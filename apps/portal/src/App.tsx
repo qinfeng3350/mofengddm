@@ -118,11 +118,7 @@ function App() {
       />
       <Route
         path="/runtime/form"
-        element={
-          <ProtectedRoute>
-            <RuntimeFormPage />
-          </ProtectedRoute>
-        }
+        element={<RuntimeFormPage />}
       />
       <Route
         path="/runtime/list"

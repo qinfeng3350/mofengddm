@@ -131,6 +131,25 @@ export class FormDefinitionService {
     return formDefinition;
   }
 
+  // 外链填单场景：按 formId 公开读取表单定义（不要求登录）
+  async findOnePublic(formId: string): Promise<FormDefinitionEntity> {
+    const formDefinition = await this.formDefinitionRepository.findOne({
+      where: { formId },
+    });
+
+    if (!formDefinition) {
+      throw new NotFoundException(`表单定义 ${formId} 不存在`);
+    }
+
+    const parsed = this.parseConfig(formDefinition.config);
+    formDefinition.config = Object.keys(parsed).length
+      ? parsed
+      : { fields: [], layout: { type: 'grid', columns: 12 }, metadata: {} };
+    if (!(formDefinition.config as any).metadata) (formDefinition.config as any).metadata = {};
+
+    return formDefinition;
+  }
+
   async update(
     formId: string,
     updateDto: Partial<CreateFormDefinitionDto>,

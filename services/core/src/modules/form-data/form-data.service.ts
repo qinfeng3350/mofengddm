@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FormDataEntity } from '../../database/entities/form-data.entity';
@@ -215,6 +215,7 @@ export class FormDataService {
     submitDto: SubmitFormDataDto,
     userId: string,
     userName?: string,
+    options?: { anonymous?: boolean },
   ): Promise<FormDataEntity> {
     // form_id 在库中全局唯一：按 formId 解析真实租户，避免“默认租户”与表单所属租户不一致导致 404
     const formDefinition = await this.formDefinitionRepository.findOne({
@@ -227,6 +228,12 @@ export class FormDataService {
 
     const tenantId = formDefinition.tenantId;
     const config = this.parseConfig(formDefinition.config);
+    if (options?.anonymous) {
+      const externalEnabled = Boolean((config as any)?.metadata?.externalLink?.enableExternalFill);
+      if (!externalEnabled) {
+        throw new ForbiddenException('当前表单未开启外链填单');
+      }
+    }
     const fieldPermissions = config?.metadata?.fieldPermissions;
     const roleIds = await this.getUserRoleIds({ userId, tenantId: String(tenantId) });
 
