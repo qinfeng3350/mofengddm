@@ -121,6 +121,10 @@ function App() {
         element={<RuntimeFormPage />}
       />
       <Route
+        path="/external/form"
+        element={<RuntimeFormPage />}
+      />
+      <Route
         path="/runtime/list"
         element={
           <ProtectedRoute>

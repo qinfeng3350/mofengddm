@@ -3129,7 +3129,7 @@ const ExternalLinkSettings: React.FC<{ formId?: string }> = ({ formId }) => {
     updateMutation.mutate({ [key]: checked });
   };
 
-  const externalFillUrl = `${window.location.origin}/runtime/form?formId=${encodeURIComponent(formId || "")}`;
+  const externalFillUrl = `${window.location.origin}/external/form?formId=${encodeURIComponent(formId || "")}`;
 
   const handleCopyExternalFillUrl = async () => {
     try {

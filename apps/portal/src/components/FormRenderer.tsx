@@ -233,7 +233,7 @@ export const FormRenderer = ({
     enabled: !!recordId,
   });
 
-  const { user } = useAuthStore();
+  const { user, isAuthenticated } = useAuthStore();
   const draftStorageKey = useMemo(() => {
     const uid = user?.id ? String(user.id) : "anonymous";
     return `mofeng:draft:${formId}:${uid}`;
@@ -243,6 +243,7 @@ export const FormRenderer = ({
   const { data: myRoles } = useQuery({
     queryKey: ["users", "me", "roles"],
     queryFn: async () => apiClient.get("/users/me/roles"),
+    enabled: isAuthenticated,
   });
 
   // 流水号生成状态

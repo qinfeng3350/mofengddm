@@ -56,10 +56,13 @@ apiClient.interceptors.response.use(
       });
     }
     if (error.response?.status === 401) {
+      const isExternalRuntime =
+        window.location.pathname.startsWith("/runtime/form") ||
+        window.location.pathname.startsWith("/external/form");
       // token过期或无效，清除认证信息
       localStorage.removeItem("auth-storage");
       // 只在非登录页面时跳转
-      if (!window.location.pathname.includes('/login')) {
+      if (!window.location.pathname.includes('/login') && !isExternalRuntime) {
         window.location.href = "/login";
       }
     }
