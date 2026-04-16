@@ -475,6 +475,8 @@ export class WorkflowService {
         todoTaskId: string;
         creatorUnionId: string;
         executorUnionIds: string[];
+        title: string;
+        description: string;
       }
     | null
   > {
@@ -878,6 +880,8 @@ export class WorkflowService {
           todoTaskId: String(created.id),
           creatorUnionId,
           executorUnionIds,
+          title: todoTitle,
+          description: todoDescription,
         };
       }
       return null;
@@ -994,6 +998,8 @@ export class WorkflowService {
             taskId: dt.todoTaskId,
             creatorUnionId: dt.creatorUnionId,
             executorUnionIds: dt.executorUnionIds,
+            title: dt.title,
+            description: dt.description,
           };
           await this.instanceRepo.save(instance);
         }
@@ -1031,6 +1037,7 @@ export class WorkflowService {
             return;
           }
         }
+        const startHistory = (inst.history || []).find((h: any) => h.type === 'start');
         tasks.push({
           instanceId: inst.id,
           recordId: inst.recordId,
@@ -1046,6 +1053,9 @@ export class WorkflowService {
           updatedAt: t.updatedAt,
           currentNodeId: inst.currentNodeId,
           instanceStatus: inst.status,
+          initiatorName: startHistory?.userName || '',
+          todoTitle: (t as any)?.dingtalkTodo?.title || '',
+          todoDescription: (t as any)?.dingtalkTodo?.description || '',
         });
       });
     });
@@ -1166,6 +1176,8 @@ export class WorkflowService {
             taskId: dt.todoTaskId,
             creatorUnionId: dt.creatorUnionId,
             executorUnionIds: dt.executorUnionIds,
+            title: dt.title,
+            description: dt.description,
           };
           saved = await this.instanceRepo.save(inst);
         }
@@ -1312,6 +1324,8 @@ export class WorkflowService {
             taskId: dt.todoTaskId,
             creatorUnionId: dt.creatorUnionId,
             executorUnionIds: dt.executorUnionIds,
+            title: dt.title,
+            description: dt.description,
           };
           await this.instanceRepo.save(inst);
         }

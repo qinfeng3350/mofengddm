@@ -78,7 +78,7 @@ export const WorkflowTasksPage = () => {
       return <Empty description="暂无数据" />;
     }
     return (
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         {tasks.map((task: any) => {
           const handleClick = () => {
             // 构建跳转URL，包含 recordId 和 formId（如果有）
@@ -113,16 +113,24 @@ export const WorkflowTasksPage = () => {
               onClick={handleClick}
             >
               <Space style={{ width: "100%", justifyContent: "space-between" }} align="start">
-                <Space direction="vertical" size={4}>
+                <Space orientation="vertical" size={4}>
                   <Space>
                     <Tag color="blue">{task.label || "审批节点"}</Tag>
                     <Text type="secondary" style={{ fontSize: 12 }}>{renderNodeType(task.nodeType)}</Text>
                   </Space>
-                  {task.instanceTitle && (
-                    <Text style={{ fontSize: 13 }}>
-                      {task.instanceTitle}
+                  <Text strong style={{ fontSize: 14 }}>
+                    {String(task.todoTitle || task.instanceTitle || `${task.label || "流程待办"}`)}
+                  </Text>
+                  {task.todoDescription ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {String(task.todoDescription).split("\n").slice(0, 2).join(" · ")}
                     </Text>
-                  )}
+                  ) : null}
+                  {task.initiatorName ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      发起人：{task.initiatorName}
+                    </Text>
+                  ) : null}
                   {Array.isArray(task.assignees?.values) && task.assignees.values.length > 0 && (
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       审批人：{task.assignees.values.map((id: any) => {
